@@ -1,0 +1,160 @@
+<!doctype html>
+<!-- La página que abre el QR en el móvil del cliente. Es la misma para todos los
+     proyectos: publicada (ARviewerOL-visor en GitHub Pages) descifra el modelo con
+     la clave de la dirección; en la previa de ARviewerOL lee proyecto.json. -->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Ortiz.Leon Arquitectos</title>
+<link rel="icon" href="monograma.png">
+<script type="module" src="model-viewer.min.js"></script>
+<script src="qrcode.js"></script>
+<style>
+  :root {
+    --tinta: #262626; --tenue: #787673; --lienzo: #f0efec; --elevada: #fff;
+    --oliva: #3f5544; --filete: #d7d5d2;
+    --serie: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--lienzo); color: var(--tinta);
+    font-family: var(--serie); -webkit-font-smoothing: antialiased; }
+  model-viewer { position: fixed; inset: 0; width: 100%; height: 100%;
+    --poster-color: transparent; --progress-bar-color: var(--oliva); }
+  .cabecera { position: fixed; z-index: 2; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; gap: 12px;
+    padding: calc(env(safe-area-inset-top) + 16px) 20px 16px; pointer-events: none; }
+  .cabecera img { width: 34px; height: 34px; }
+  .cabecera .nombre { font-size: 17px; font-weight: 700; letter-spacing: -.01em; line-height: 1.2; }
+  .cabecera .estudio { font-size: 12px; color: var(--tenue); }
+  .pie { position: fixed; z-index: 2; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 16px 20px calc(env(safe-area-inset-bottom) + 22px); pointer-events: none; }
+  .pie > * { pointer-events: auto; }
+  .boton-ar { display: inline-flex; align-items: center; gap: 10px;
+    height: 52px; padding: 0 26px; border: 0; border-radius: 26px;
+    background: var(--oliva); color: #fff; font: 700 16px var(--serie);
+    box-shadow: 0 6px 22px rgba(38, 38, 38, .22); cursor: pointer; }
+  .boton-ar svg { width: 22px; height: 22px; }
+  .dato { font-size: 12.5px; color: var(--tenue); text-align: center; }
+  .sin-ar { display: none; max-width: 34ch; font-size: 13px; color: var(--tinta);
+    text-align: center; background: rgba(255,255,255,.8); padding: 10px 14px; border-radius: 10px; }
+  .qr-aqui { display: none; width: 128px; padding: 6px; background: #fff; border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(38,38,38,.12); }
+  .qr-aqui svg { display: block; width: 100%; height: auto; }
+  .error { position: fixed; inset: 0; display: none; place-items: center; padding: 30px;
+    text-align: center; color: var(--tenue); }
+</style>
+</head>
+<body>
+<header class="cabecera">
+  <img src="monograma.png" alt="">
+  <div><div class="nombre" id="nombre">&nbsp;</div>
+       <div class="estudio">Ortiz.Leon Arquitectos</div></div>
+</header>
+
+<model-viewer id="visor" alt="Modelo 3D del proyecto"
+  ar ar-modes="webxr scene-viewer quick-look" ar-placement="floor" ar-scale="auto"
+  camera-controls touch-action="pan-y" interaction-prompt="auto"
+  camera-orbit="-35deg 65deg auto" shadow-intensity="1" shadow-softness="0.8"
+  environment-image="neutral" exposure="1.05">
+  <button slot="ar-button" class="boton-ar" style="display:none" aria-hidden="true"></button>
+</model-viewer>
+
+<div class="pie">
+  <button class="boton-ar" id="ver-ar" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg>
+    Ver en tu espacio</button>
+  <div class="qr-aqui" id="qr-aqui"></div>
+  <div class="sin-ar" id="sin-ar">Gira el modelo con el dedo. Para verlo en tu espacio, abre esta
+    página en un móvil o una tableta.</div>
+  <div class="dato" id="dato"></div>
+</div>
+<div class="error" id="error">No se ha podido abrir el modelo.</div>
+
+<script>
+// Dos maneras de abrir un modelo:
+//  - publicado: la dirección lleva #<id>.<clave>. Se baja m/<id>.bin (cifrado,
+//    AES-256-GCM) y se descifra aquí con la clave, que no sale nunca del móvil.
+//  - previa en ARviewerOL: sin «#», proyecto.json y modelo.glb a su lado.
+(async function () {
+  const visor = document.getElementById('visor');
+  const error = texto => {
+    const e = document.getElementById('error');
+    e.textContent = texto; e.style.display = 'grid';
+    document.querySelector('.pie').style.display = 'none';
+  };
+  const deB64url = t => Uint8Array.from(atob(t.replace(/-/g, '+').replace(/_/g, '/') +
+    '='.repeat((4 - t.length % 4) % 4)), c => c.charCodeAt(0));
+
+  async function abrirCifrado(id, clave) {
+    const r = await fetch('m/' + id + '.bin', { cache: 'no-cache' });
+    if (!r.ok) throw new Error('no-esta');
+    const caja = new Uint8Array(await r.arrayBuffer());
+    const llave = await crypto.subtle.importKey('raw', deB64url(clave), 'AES-GCM', false, ['decrypt']);
+    const claro = new Uint8Array(await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: caja.slice(0, 12) }, llave, caja.slice(12)));
+    if (new TextDecoder().decode(claro.slice(0, 4)) !== 'ARV1') throw new Error('formato');
+    const n = new DataView(claro.buffer).getUint32(4, true);
+    const p = JSON.parse(new TextDecoder().decode(claro.slice(8, 8 + n)));
+    p.src = URL.createObjectURL(new Blob([claro.slice(8 + n)], { type: 'model/gltf-binary' }));
+    return p;
+  }
+
+  let p = {};
+  const h = location.hash.slice(1);
+  if (h) {
+    const [id, clave] = h.split('.');
+    if (!/^[\w-]{8,}$/.test(id || '') || !/^[\w-]{40,}$/.test(clave || '')) {
+      error('Este enlace no está completo. Vuelve a escanear el código QR.'); return;
+    }
+    // El modelo está en la memoria del móvil, no en una dirección: Scene Viewer
+    // (Android) no puede ir a buscarlo. Android entra por WebXR; iPhone, por
+    // Quick Look con el USDZ que model-viewer hace al momento.
+    visor.setAttribute('ar-modes', 'webxr quick-look');
+    try { p = await abrirCifrado(id, clave); }
+    catch (e) {
+      error(e.message === 'no-esta' ? 'Este modelo ya no está publicado.'
+                                    : 'No se ha podido abrir el modelo con este enlace.');
+      return;
+    }
+  } else {
+    try { p = await (await fetch('proyecto.json', { cache: 'no-cache' })).json(); } catch (e) {}
+    p.src = p.modelo || 'modelo.glb';
+  }
+
+  if (p.nombre) {
+    document.getElementById('nombre').textContent = p.nombre;
+    document.title = p.nombre + ' · Ortiz.Leon Arquitectos';
+  }
+  const esc = p.escala || 1;
+  const datos = [esc > 1 ? 'Maqueta a escala 1:' + esc : 'A tamaño real'];
+  if (p.medidas_m) datos.push(Math.round(p.medidas_m[0]) + ' × ' + Math.round(p.medidas_m[2]) + ' m en planta');
+  document.getElementById('dato').textContent = datos.join(' · ');
+
+  visor.addEventListener('error', () => error('No se ha podido abrir el modelo.'));
+  visor.addEventListener('load', () => {
+    const boton = document.getElementById('ver-ar');
+    if (visor.canActivateAR) {
+      boton.hidden = false;
+      boton.addEventListener('click', () => visor.activateAR());
+    } else {
+      document.getElementById('sin-ar').style.display = 'block';
+      // En un ordenador, el QR de esta misma dirección (con su clave) para pasarla al móvil
+      if (window.qrcode && !matchMedia('(pointer: coarse)').matches && /^https:/.test(location.href)) {
+        const qr = qrcode(0, 'M'); qr.addData(location.href); qr.make();
+        const caja = document.getElementById('qr-aqui');
+        caja.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+        caja.style.display = 'block';
+        document.getElementById('sin-ar').textContent = 'Gira el modelo con el ratón. Para verlo en tu espacio, escanea el código con el móvil.';
+      }
+    }
+  });
+  visor.src = p.src;
+})();
+</script>
+</body>
+</html>
