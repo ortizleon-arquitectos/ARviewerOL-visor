@@ -109,10 +109,18 @@
     const llave = await crypto.subtle.importKey('raw', deB64url(clave), 'AES-GCM', false, ['decrypt']);
     const claro = new Uint8Array(await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: caja.slice(0, 12) }, llave, caja.slice(12)));
-    if (new TextDecoder().decode(claro.slice(0, 4)) !== 'ARV1') throw new Error('formato');
+    // ARV1: el GLB tal cual. ARV2: comprimido (zlib) antes de cifrar, que cifrado
+    // ya no se comprime: un modelo de 44 MB baja en 10.
+    const formato = new TextDecoder().decode(claro.slice(0, 4));
+    if (formato !== 'ARV1' && formato !== 'ARV2') throw new Error('formato');
     const n = new DataView(claro.buffer).getUint32(4, true);
     const p = JSON.parse(new TextDecoder().decode(claro.slice(8, 8 + n)));
-    p.src = URL.createObjectURL(new Blob([claro.slice(8 + n)], { type: 'model/gltf-binary' }));
+    let glb = new Blob([claro.slice(8 + n)]);
+    if (formato === 'ARV2') {
+      if (!window.DecompressionStream) throw new Error('navegador');
+      glb = await new Response(glb.stream().pipeThrough(new DecompressionStream('deflate'))).blob();
+    }
+    p.src = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
     return p;
   }
 
@@ -130,7 +138,8 @@
     try { p = await abrirCifrado(id, clave); }
     catch (e) {
       error(e.message === 'no-esta' ? 'Este modelo ya no está publicado.'
-                                    : 'No se ha podido abrir el modelo con este enlace.');
+          : e.message === 'navegador' ? 'Este navegador es demasiado antiguo para abrir el modelo. Actualízalo y vuelve a escanear el código.'
+          : 'No se ha podido abrir el modelo con este enlace.');
       return;
     }
   } else {
