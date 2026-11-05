@@ -26,7 +26,7 @@
   .cabecera { position: fixed; z-index: 2; top: 0; left: 0; right: 0;
     display: flex; align-items: center; gap: 12px;
     padding: calc(env(safe-area-inset-top) + 16px) 20px 16px; pointer-events: none; }
-  .cabecera img { width: 34px; height: 34px; }
+  .cabecera img { height: 24px; width: auto; flex: none; }
   .cabecera .nombre { font-size: 17px; font-weight: 700; letter-spacing: -.01em; line-height: 1.2; }
   .cabecera .estudio { font-size: 12px; color: var(--tenue); }
   .pie { position: fixed; z-index: 2; left: 0; right: 0; bottom: 0;
@@ -38,7 +38,6 @@
     background: var(--oliva); color: #fff; font: 700 16px var(--serie);
     box-shadow: 0 6px 22px rgba(38, 38, 38, .22); cursor: pointer; }
   .boton-ar svg { width: 22px; height: 22px; }
-  .dato { font-size: 12.5px; color: var(--tenue); text-align: center; }
   .sin-ar { display: none; max-width: 34ch; font-size: 13px; color: var(--tinta);
     text-align: center; background: rgba(255,255,255,.8); padding: 10px 14px; border-radius: 10px; }
   .qr-aqui { display: none; width: 128px; padding: 6px; background: #fff; border-radius: 10px;
@@ -84,7 +83,6 @@
   <div class="qr-aqui" id="qr-aqui"></div>
   <div class="sin-ar" id="sin-ar">Gira el modelo con el dedo. Para verlo en tu espacio, abre esta
     página en un móvil o una tableta.</div>
-  <div class="dato" id="dato"></div>
 </div>
 <div class="error" id="error">No se ha podido abrir el modelo.</div>
 
@@ -143,10 +141,6 @@
     document.getElementById('nombre').textContent = p.nombre;
     document.title = p.nombre + ' · Ortiz.Leon Arquitectos';
   }
-  const esc = p.escala || 1;
-  const datos = [esc > 1 ? 'Maqueta a escala 1:' + esc : 'A tamaño real'];
-  if (p.medidas_m) datos.push(Math.round(p.medidas_m[0]) + ' × ' + Math.round(p.medidas_m[2]) + ' m en planta');
-  document.getElementById('dato').textContent = datos.join(' · ');
 
   visor.addEventListener('error', () => error('No se ha podido abrir el modelo.'));
   visor.addEventListener('load', () => {
