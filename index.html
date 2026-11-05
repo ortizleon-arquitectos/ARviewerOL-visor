@@ -43,14 +43,19 @@
   .qr-aqui { display: none; width: 128px; padding: 6px; background: #fff; border-radius: 10px;
     box-shadow: 0 4px 16px rgba(38,38,38,.12); }
   .qr-aqui svg { display: block; width: 100%; height: auto; }
-  /* El conmutador de estilo: Color (los materiales de Revit) o Madera (maqueta de taller) */
-  .estilos { position: fixed; z-index: 3; top: calc(env(safe-area-inset-top) + 18px); right: 16px;
-    display: none; padding: 3px; gap: 2px; border-radius: 99px;
+  /* El conmutador de estilo (Blanco, Texturas, Madera), abajo y al centro, encima del
+     botón de AR: arriba a la derecha no cabía en un móvil y se montaba en el nombre */
+  .estilos { display: none; padding: 3px; gap: 2px; border-radius: 99px;
     background: rgba(255,255,255,.82); box-shadow: 0 2px 10px rgba(38,38,38,.12);
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
   .estilos button { height: 30px; padding: 0 13px; border: 0; border-radius: 99px; background: none;
     font: 600 13px var(--serie); color: var(--tenue); cursor: pointer; }
   .estilos button[aria-pressed="true"] { background: var(--oliva); color: #fff; }
+  /* Dentro de la AR de Android (WebXR) el conmutador pasa a model-viewer, que es lo
+     único de la página que sigue en pantalla */
+  .estilos.en-ar { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom) + 28px); }
+  .estilos.en-ar button { height: 38px; padding: 0 16px; font-size: 15px; }
   body.portada .cabecera, body.portada .pie, body.portada .estilos { display: none !important; }
   .error { position: fixed; inset: 0; display: none; place-items: center; padding: 30px;
     text-align: center; color: var(--tenue); }
@@ -63,21 +68,20 @@
        <div class="estudio">Ortiz.Leon Arquitectos</div></div>
 </header>
 
-<div class="estilos" id="estilos" role="group" aria-label="Cómo se ve la maqueta">
-  <button data-estilo="blanco" aria-pressed="false">Blanco</button>
-  <button data-estilo="texturas" aria-pressed="true">Texturas</button>
-  <button data-estilo="madera" aria-pressed="false">Madera</button>
-</div>
-
 <model-viewer id="visor" alt="Modelo 3D del proyecto"
   ar ar-modes="webxr scene-viewer quick-look" ar-placement="floor" ar-scale="auto"
   camera-controls touch-action="pan-y" interaction-prompt="auto"
   camera-orbit="-35deg 65deg auto" shadow-intensity="1" shadow-softness="0.8"
-  environment-image="neutral" exposure="1.05">
+  environment-image="luz.hdr" exposure="1">
   <button slot="ar-button" class="boton-ar" style="display:none" aria-hidden="true"></button>
 </model-viewer>
 
 <div class="pie">
+  <div class="estilos" id="estilos" role="group" aria-label="Cómo se ve la maqueta">
+    <button data-estilo="blanco" aria-pressed="false">Blanco</button>
+    <button data-estilo="texturas" aria-pressed="true">Texturas</button>
+    <button data-estilo="madera" aria-pressed="false">Madera</button>
+  </div>
   <button class="boton-ar" id="ver-ar" hidden>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">
       <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg>
@@ -197,7 +201,7 @@
   const lineal = c => Math.pow(c / 255, 2.2);
   const deSRGB = (c, a) => [lineal(c[0]), lineal(c[1]), lineal(c[2]), a == null ? 1 : a];
   const BLANCO = {
-    edificio: [[246, 245, 242]], entorno: [[238, 237, 234]], terreno: [[226, 231, 216]],
+    edificio: [[246, 245, 242]], entorno: [[238, 237, 234]], terreno: [[232, 235, 225]],
     copa: [[200, 222, 188], 0.85], tronco: [[206, 192, 172]], vidrio: [[226, 234, 238], 0.35],
   };
   const MADERA = {
@@ -250,6 +254,19 @@
     const caja = document.getElementById('estilos');
     caja.style.display = 'flex';
     caja.querySelectorAll('button').forEach(b => b.addEventListener('click', () => ponerEstilo(b.dataset.estilo)));
+    // En la AR de Android (WebXR) solo queda en pantalla model-viewer: el conmutador
+    // entra en él mientras dura y vuelve al pie al salir. Un toque en él no es un toque
+    // en la maqueta (beforexrselect). En iPhone la AR es Quick Look, de Apple: no
+    // enseña nada de la página, el modo se elige antes de entrar.
+    const pie = document.querySelector('.pie');
+    caja.addEventListener('beforexrselect', e => e.preventDefault());
+    visor.addEventListener('ar-status', e => {
+      if (e.detail.status === 'session-started') {
+        caja.classList.add('en-ar'); visor.appendChild(caja);
+      } else if (e.detail.status === 'not-presenting' || e.detail.status === 'failed') {
+        caja.classList.remove('en-ar'); pie.prepend(caja);
+      }
+    });
     ponerEstilo(inicial);
   }
 
@@ -270,11 +287,15 @@
     visor.shadowIntensity = luz.sombra;
   }
 
+  // Con el cielo de luz.hdr (sol y sombra, como la habitación en AR). La curva
+  // «neutral» no desatura (ACES lavaba los colores claros).
   const LUZ = {
-    blanco: { curva: 'neutral', exposicion: 1.0, sombra: 1 },     // con ACES el blanco sale gris
-    texturas: { curva: 'aces', exposicion: 0.9, sombra: 1 },
-    madera: { curva: 'neutral', exposicion: 0.95, sombra: 1 },
+    blanco: { curva: 'neutral', exposicion: 1.15, sombra: 1 },   // el blanco, blanco: sin gris
+    texturas: { curva: 'neutral', exposicion: 0.9, sombra: 1 },
+    madera: { curva: 'neutral', exposicion: 1.05, sombra: 1 },
   };
+  // En Texturas, los árboles de verdad: el GLB los trae en el verde pálido de maqueta
+  const ARBOLES = { copa: [[112, 140, 86]], tronco: [[118, 98, 78]] };
 
   // Las aristas son líneas, y el material de una línea no lo cambia la API de
   // model-viewer (three.js le hace su propia copia): se encienden y apagan en la
@@ -289,7 +310,7 @@
         o.visible = si;
         // three.js ata la copia de la línea a otro material (salían del blanco del
         // edificio): su color se pone aquí, gris medio: a escala de maqueta las fachadas de lamas juntan muchas y en negro se emborronaban
-        if (o.material && o.material.color) { o.material.color.setRGB(0.32, 0.32, 0.32); o.material.needsUpdate = true; }
+        if (o.material && o.material.color) { o.material.color.setRGB(0.42, 0.42, 0.42); o.material.needsUpdate = true; }
       } else if (o.isMesh && o.material) {
         // las caras, un pelo hacia atrás: la arista se ve entera y no a trozos
         for (const m of [].concat(o.material)) {
@@ -306,7 +327,7 @@
       if (papel === 'lineas') return;           // las aristas van por lineasVisibles()
       const tex = pbr.baseColorTexture;
       if (estilo === 'texturas') {
-        pbr.setBaseColorFactor(o.color);
+        pbr.setBaseColorFactor(ARBOLES[papel] ? deSRGB(ARBOLES[papel][0]) : o.color);
         pbr.setRoughnessFactor(o.rugosidad);
         if (tex) tex.setTexture(o.textura);
         if (m.setAlphaMode && o.alfa) m.setAlphaMode(o.alfa);
