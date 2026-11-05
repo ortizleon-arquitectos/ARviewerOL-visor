@@ -64,7 +64,8 @@
 </header>
 
 <div class="estilos" id="estilos" role="group" aria-label="Cómo se ve la maqueta">
-  <button data-estilo="color" aria-pressed="true">Color</button>
+  <button data-estilo="blanco" aria-pressed="false">Blanco</button>
+  <button data-estilo="texturas" aria-pressed="true">Texturas</button>
   <button data-estilo="madera" aria-pressed="false">Madera</button>
 </div>
 
@@ -173,22 +174,36 @@
     }
   });
   const pedido = new URLSearchParams(location.search).get('estilo');
-  if (new URLSearchParams(location.search).has('portada')) document.body.classList.add('portada');
+  if (new URLSearchParams(location.search).has('portada')) {
+    document.body.classList.add('portada');
+    visor.setAttribute('interaction-prompt', 'none');      // sin la mano encima de la portada
+  }
+  // «color» es el nombre viejo de «texturas» (lo publicado antes del 05/11/2026)
+  const deVerdad = e => e === 'color' ? 'texturas' : e;
   visor.addEventListener('load', () => prepararEstilos(
-    ['color', 'madera'].includes(pedido) ? pedido : (p.estilo || 'color')), { once: true });
+    ['blanco', 'texturas', 'madera'].includes(deVerdad(pedido)) ? deVerdad(pedido) : (deVerdad(p.estilo) || 'texturas')),
+    { once: true });
   visor.src = p.src;
 
   // ── Los estilos ─────────────────────────────────────────────────────────
   // Los materiales del GLB se llaman por su papel (edificio, entorno, terreno,
-  // vidrio, tronco, copa). «Color» deja los de Revit; «Madera» los viste como
-  // una maqueta de taller: arce el edificio, madera más tostada el entorno,
-  // corcho el terreno, metacrilato el vidrio, bolas de madera los árboles.
-  // La veta se dibuja aquí, en un lienzo: el modelo no pesa más por ella.
-  const MADERA = {          // sRGB
-    edificio: [240, 226, 196], entorno: [196, 164, 124], terreno: [168, 132, 94],
-    copa: [226, 204, 164], tronco: [150, 116, 80],
-  };
+  // vidrio, tronco, copa, y «lineas» las aristas). Lo que trae el GLB es el modo
+  // Texturas: el aspecto de render de Revit, con su textura a tamaño real.
+  //  · Blanco: como la «Línea oculta» de Revit, todo blanco mate con sus aristas,
+  //    el terreno y los árboles en tonos muy pálidos.
+  //  · Madera: maqueta de taller de tilo y abedul, veta fina y de poco contraste,
+  //    el entorno en otro tono, metacrilato el vidrio, los árboles como el liquen
+  //    seco de las maquetas. La veta se dibuja aquí, en un lienzo.
   const lineal = c => Math.pow(c / 255, 2.2);
+  const deSRGB = (c, a) => [lineal(c[0]), lineal(c[1]), lineal(c[2]), a == null ? 1 : a];
+  const BLANCO = {
+    edificio: [[246, 245, 242]], entorno: [[238, 237, 234]], terreno: [[226, 231, 216]],
+    copa: [[200, 222, 188], 0.85], tronco: [[206, 192, 172]], vidrio: [[226, 234, 238], 0.35],
+  };
+  const MADERA = {
+    edificio: [[240, 229, 207]], entorno: [[228, 212, 184]], terreno: [[220, 201, 168]],
+    copa: [[198, 180, 138]], tronco: [[178, 152, 114]], vidrio: [[234, 238, 236], 0.3],
+  };
 
   function lienzoDeVeta() {
     const N = 512, cv = document.createElement('canvas');
@@ -199,12 +214,14 @@
     for (let i = 0; i < N; i++) { semilla = (semilla * 16807) % 2147483647; ruido[i] = semilla / 2147483647; }
     const T = 2 * Math.PI / N;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      // Todo periódico en 512: la textura casa consigo misma al repetirse
-      // Veta fina y casi recta, de poco contraste: de lejos se funde, de cerca se lee
-      const t = y + 2.2 * Math.sin(T * 2 * x) + 1.1 * Math.sin(T * 5 * x + 1.3);
-      const a = 0.5 + 0.5 * Math.sin(T * 16 * t), b = 0.5 + 0.5 * Math.sin(T * 41 * t + 2);
+      // Todo periódico en 512: la textura casa consigo misma al repetirse.
+      // Tilo/abedul: fibras finas y casi rectas, muy poco contraste, y alguna veta
+      // algo más oscura de tarde en tarde (como en las maquetas de referencia)
+      const t = y + 1.4 * Math.sin(T * 2 * x) + 0.6 * Math.sin(T * 7 * x + 1.3);
+      const fibra = 0.5 + 0.5 * Math.sin(T * 61 * t + 3 * ruido[x]);
+      const veta = Math.pow(0.5 + 0.5 * Math.sin(T * 9 * t + 0.7), 14);
       const fila = ruido[((Math.round(t) % N) + N) % N];
-      const v = 1 - 0.055 * Math.pow(a, 4) - 0.035 * Math.pow(b, 6) - 0.035 * fila;
+      const v = 1 - 0.018 * fibra - 0.07 * veta - 0.025 * fila;
       const k = (y * N + x) * 4, c = Math.round(255 * v);
       d[k] = d[k + 1] = d[k + 2] = c; d[k + 3] = 255;
     }
@@ -216,9 +233,18 @@
   let VETA = null;
 
   async function prepararEstilos(inicial) {
+    // model-viewer carga los materiales cuando hacen falta: hay que pedírselo antes
+    // de tocarlos (el de las aristas no llegaba cargado y paraba todos los estilos)
+    // (con tope: el de las aristas, que son líneas, puede no cargarse nunca)
+    await Promise.all(visor.model.materials.map(m => Promise.race([
+      m.ensureLoaded().catch(() => {}), new Promise(r => setTimeout(r, 3000))])));
     for (const m of visor.model.materials) {
-      ORIGINAL.set(m, { color: m.pbrMetallicRoughness.baseColorFactor.slice(),
-                        rugosidad: m.pbrMetallicRoughness.roughnessFactor });
+      if (m.isLoaded === false) continue;
+      const pbr = m.pbrMetallicRoughness;
+      ORIGINAL.set(m, { color: pbr.baseColorFactor.slice(), rugosidad: pbr.roughnessFactor,
+                        textura: pbr.baseColorTexture ? pbr.baseColorTexture.texture : null,
+                        alfa: m.getAlphaMode ? m.getAlphaMode() : null });
+      if (m.name === 'lineas' && m.setAlphaMode) m.setAlphaMode('BLEND');   // para poder apagarlas
     }
     try { VETA = await visor.createTexture(lienzoDeVeta()); } catch (e) { VETA = null; }
     const caja = document.getElementById('estilos');
@@ -231,25 +257,69 @@
     document.querySelectorAll('#estilos button').forEach(b =>
       b.setAttribute('aria-pressed', String(b.dataset.estilo === estilo)));
     for (const m of visor.model.materials) {
-      const o = ORIGINAL.get(m), pbr = m.pbrMetallicRoughness, papel = m.name;
-      if (estilo === 'madera') {
-        if (papel === 'vidrio') {
-          pbr.setBaseColorFactor([0.86, 0.9, 0.92, 0.42]);
-          pbr.setRoughnessFactor(0.25);
-          continue;
+      const o = ORIGINAL.get(m);
+      if (!o) continue;                         // un material que no se ha podido cargar
+      try { vestir(m, o, estilo); } catch (e) { console.error('estilo', m.name, e); }
+    }
+    lineasVisibles(estilo === 'blanco');
+    // La luz de cada modo. La de serie (exposición 1,05, curva «neutral») lavaba el
+    // blanco y los colores claros en la previa; en AR manda la luz de la habitación.
+    const luz = LUZ[estilo] || LUZ.texturas;
+    visor.toneMapping = luz.curva;
+    visor.exposure = luz.exposicion;
+    visor.shadowIntensity = luz.sombra;
+  }
+
+  const LUZ = {
+    blanco: { curva: 'neutral', exposicion: 1.0, sombra: 1 },     // con ACES el blanco sale gris
+    texturas: { curva: 'aces', exposicion: 0.9, sombra: 1 },
+    madera: { curva: 'neutral', exposicion: 0.95, sombra: 1 },
+  };
+
+  // Las aristas son líneas, y el material de una línea no lo cambia la API de
+  // model-viewer (three.js le hace su propia copia): se encienden y apagan en la
+  // escena. Sirve también en la AR de Android (WebXR, la misma escena); Quick Look
+  // (iPhone) no lleva líneas.
+  function lineasVisibles(si) {
+    const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
+    const escena = sim && visor[sim];
+    if (!escena || !escena.traverse) return;
+    escena.traverse(o => {
+      if (o.isLineSegments || o.isLine) {
+        o.visible = si;
+        // three.js ata la copia de la línea a otro material (salían del blanco del
+        // edificio): su color se pone aquí, gris medio: a escala de maqueta las fachadas de lamas juntan muchas y en negro se emborronaban
+        if (o.material && o.material.color) { o.material.color.setRGB(0.32, 0.32, 0.32); o.material.needsUpdate = true; }
+      } else if (o.isMesh && o.material) {
+        // las caras, un pelo hacia atrás: la arista se ve entera y no a trozos
+        for (const m of [].concat(o.material)) {
+          m.polygonOffset = si; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1;
         }
-        const c = MADERA[papel] || MADERA.edificio;
-        pbr.setBaseColorFactor([lineal(c[0]), lineal(c[1]), lineal(c[2]), 1]);
-        pbr.setRoughnessFactor(0.72);
-        if (VETA && pbr.baseColorTexture) {
-          pbr.baseColorTexture.setTexture(VETA);
-          const sm = pbr.baseColorTexture.texture && pbr.baseColorTexture.texture.sampler;
-          if (sm) { sm.setWrapS(10497); sm.setWrapT(10497); }      // REPEAT
-        }
-      } else {
+      }
+    });
+    if (escena.queueRender) escena.queueRender();
+  }
+
+  function vestir(m, o, estilo) {
+    {   // un material
+      const pbr = m.pbrMetallicRoughness, papel = m.name;
+      if (papel === 'lineas') return;           // las aristas van por lineasVisibles()
+      const tex = pbr.baseColorTexture;
+      if (estilo === 'texturas') {
         pbr.setBaseColorFactor(o.color);
         pbr.setRoughnessFactor(o.rugosidad);
-        if (pbr.baseColorTexture) pbr.baseColorTexture.setTexture(null);
+        if (tex) tex.setTexture(o.textura);
+        if (m.setAlphaMode && o.alfa) m.setAlphaMode(o.alfa);
+        return;
+      }
+      const tabla = estilo === 'blanco' ? BLANCO : MADERA;
+      const [c, a] = tabla[papel] || tabla.edificio;
+      if (m.setAlphaMode) m.setAlphaMode(a != null && a < 1 ? 'BLEND' : 'OPAQUE');
+      pbr.setBaseColorFactor(deSRGB(c, a));
+      pbr.setRoughnessFactor(papel === 'vidrio' ? 0.2 : estilo === 'blanco' ? 0.95 : papel === 'copa' ? 1 : 0.8);
+      if (tex) tex.setTexture(estilo === 'madera' && papel !== 'vidrio' ? VETA : null);
+      if (estilo === 'madera' && tex && tex.texture && tex.texture.sampler) {
+        tex.texture.sampler.setWrapS(10497); tex.texture.sampler.setWrapT(10497);   // REPEAT
       }
     }
   }
