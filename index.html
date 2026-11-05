@@ -51,6 +51,7 @@
   .estilos button { height: 30px; padding: 0 13px; border: 0; border-radius: 99px; background: none;
     font: 600 13px var(--serie); color: var(--tenue); cursor: pointer; }
   .estilos button[aria-pressed="true"] { background: var(--oliva); color: #fff; }
+  body.portada .cabecera, body.portada .pie, body.portada .estilos { display: none !important; }
   .error { position: fixed; inset: 0; display: none; place-items: center; padding: 30px;
     text-align: center; color: var(--tenue); }
 </style>
@@ -150,9 +151,11 @@
       boton.addEventListener('click', () => visor.activateAR());
     } else {
       document.getElementById('sin-ar').style.display = 'block';
-      // En un ordenador, el QR de esta misma dirección (con su clave) para pasarla al móvil
-      if (window.qrcode && !matchMedia('(pointer: coarse)').matches && /^https:/.test(location.href)) {
-        const qr = qrcode(0, 'M'); qr.addData(location.href); qr.make();
+      // En un ordenador, el QR para pasarla al móvil: el de esta misma dirección
+      // (publicada, con su clave) o, en la copia de Maqueta 3D, el que lleva proyecto.json
+      const destino = /^https:/.test(location.href) ? location.href : p.qr;
+      if (window.qrcode && destino && !matchMedia('(pointer: coarse)').matches) {
+        const qr = qrcode(0, 'M'); qr.addData(destino); qr.make();
         const caja = document.getElementById('qr-aqui');
         caja.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
         caja.style.display = 'block';
@@ -161,6 +164,7 @@
     }
   });
   const pedido = new URLSearchParams(location.search).get('estilo');
+  if (new URLSearchParams(location.search).has('portada')) document.body.classList.add('portada');
   visor.addEventListener('load', () => prepararEstilos(
     ['color', 'madera'].includes(pedido) ? pedido : (p.estilo || 'color')), { once: true });
   visor.src = p.src;
