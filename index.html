@@ -236,6 +236,13 @@
   const ORIGINAL = new Map();
   let VETA = null;
 
+  // El de las aristas (una línea, sin emisivo) hace saltar a model-viewer al leerlo:
+  // con un error aquí se paraban todos los estilos
+  function emisivoDe(m) {
+    if (m.name === 'lineas') return null;
+    try { return m.emissiveFactor.slice(); } catch (e) { return null; }
+  }
+
   async function prepararEstilos(inicial) {
     // model-viewer carga los materiales cuando hacen falta: hay que pedírselo antes
     // de tocarlos (el de las aristas no llegaba cargado y paraba todos los estilos)
@@ -247,7 +254,8 @@
       const pbr = m.pbrMetallicRoughness;
       ORIGINAL.set(m, { color: pbr.baseColorFactor.slice(), rugosidad: pbr.roughnessFactor,
                         textura: pbr.baseColorTexture ? pbr.baseColorTexture.texture : null,
-                        alfa: m.getAlphaMode ? m.getAlphaMode() : null });
+                        alfa: m.getAlphaMode ? m.getAlphaMode() : null,
+                        emisivo: emisivoDe(m) });
       if (m.name === 'lineas' && m.setAlphaMode) m.setAlphaMode('BLEND');   // para poder apagarlas
     }
     try { VETA = await visor.createTexture(lienzoDeVeta()); } catch (e) { VETA = null; }
@@ -290,12 +298,16 @@
   // Con el cielo de luz.hdr (sol y sombra, como la habitación en AR). La curva
   // «neutral» no desatura (ACES lavaba los colores claros).
   const LUZ = {
-    blanco: { curva: 'neutral', exposicion: 1.15, sombra: 1 },   // el blanco, blanco: sin gris
+    blanco: { curva: 'neutral', exposicion: 1.0, sombra: 0.7 },   // con la luz propia (BLANCO_LUZ)
     texturas: { curva: 'neutral', exposicion: 0.9, sombra: 1 },
     madera: { curva: 'neutral', exposicion: 1.05, sombra: 1 },
   };
-  // En Texturas, los árboles de verdad: el GLB los trae en el verde pálido de maqueta
+  // En Texturas, los árboles de verdad, en los GLB de antes del 06/11/2026 (los traían
+  // en el verde pálido de maqueta; los nuevos traen el suyo, sacado de Revit)
   const ARBOLES = { copa: [[112, 140, 86]], tronco: [[118, 98, 78]] };
+  // Blanco es la «Línea oculta» de Revit: casi sin sombra. Cada cara lleva una luz
+  // propia (emisiva) de esta fracción de su color, y el sol solo la modela un poco.
+  const BLANCO_LUZ = 0.6;
 
   // Las aristas son líneas, y el material de una línea no lo cambia la API de
   // model-viewer (three.js le hace su propia copia): se encienden y apagan en la
@@ -309,8 +321,13 @@
       if (o.isLineSegments || o.isLine) {
         o.visible = si;
         // three.js ata la copia de la línea a otro material (salían del blanco del
-        // edificio): su color se pone aquí, gris medio: a escala de maqueta las fachadas de lamas juntan muchas y en negro se emborronaban
-        if (o.material && o.material.color) { o.material.color.setRGB(0.42, 0.42, 0.42); o.material.needsUpdate = true; }
+        // edificio): su color se pone aquí, gris oscuro, como las líneas de Revit
+        // Algo transparentes: sueltas se ven como las de Revit, y donde se juntan muchas
+        // (las lamas de una fachada vista de lejos) no hacen una mancha negra
+        if (o.material && o.material.color) {
+          o.material.color.setRGB(0.12, 0.12, 0.12);
+          o.material.transparent = true; o.material.opacity = 0.6; o.material.needsUpdate = true;
+        }
       } else if (o.isMesh && o.material) {
         // las caras, un pelo hacia atrás: la arista se ve entera y no a trozos
         for (const m of [].concat(o.material)) {
@@ -321,20 +338,33 @@
     if (escena.queueRender) escena.queueRender();
   }
 
+  // El color de Blanco: el de Revit si el material lo trae; si no, el de la tabla
+  function colorDe(hex, papel) {
+    if (hex && /^[0-9a-f]{6}$/i.test(hex)) return [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
+    return (BLANCO[papel] || BLANCO.edificio)[0];
+  }
+
   function vestir(m, o, estilo) {
     {   // un material
-      const pbr = m.pbrMetallicRoughness, papel = m.name;
+      // El nombre es «papel» o «papel;rrggbb», con el color del material en la
+      // «Línea oculta» de Revit (su relleno sólido)
+      const pbr = m.pbrMetallicRoughness, [papel, hex] = m.name.split(';');
       if (papel === 'lineas') return;           // las aristas van por lineasVisibles()
       const tex = pbr.baseColorTexture;
+      if (m.setEmissiveFactor && o.emisivo) {
+        m.setEmissiveFactor(estilo === 'blanco' && papel !== 'vidrio'
+          ? deSRGB(colorDe(hex, papel)).slice(0, 3).map(x => x * BLANCO_LUZ) : o.emisivo);
+      }
       if (estilo === 'texturas') {
-        pbr.setBaseColorFactor(ARBOLES[papel] ? deSRGB(ARBOLES[papel][0]) : o.color);
+        pbr.setBaseColorFactor(ARBOLES[papel] && hex == null ? deSRGB(ARBOLES[papel][0]) : o.color);
         pbr.setRoughnessFactor(o.rugosidad);
         if (tex) tex.setTexture(o.textura);
         if (m.setAlphaMode && o.alfa) m.setAlphaMode(o.alfa);
         return;
       }
       const tabla = estilo === 'blanco' ? BLANCO : MADERA;
-      const [c, a] = tabla[papel] || tabla.edificio;
+      let [c, a] = tabla[papel] || tabla.edificio;
+      if (estilo === 'blanco' && papel !== 'vidrio') c = colorDe(hex, papel);
       if (m.setAlphaMode) m.setAlphaMode(a != null && a < 1 ? 'BLEND' : 'OPAQUE');
       pbr.setBaseColorFactor(deSRGB(c, a));
       pbr.setRoughnessFactor(papel === 'vidrio' ? 0.2 : estilo === 'blanco' ? 0.95 : papel === 'copa' ? 1 : 0.8);
