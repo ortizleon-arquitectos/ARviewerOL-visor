@@ -349,10 +349,6 @@
   // chillones. Su material va más sobrio (QL, en vestir) y aquí el shader lo devuelve,
   // exacto, a lo de siempre (uReaviva: en Texturas, que es el que lo lleva).
   const QL = { sat: 0.8, luz: 0.9 };
-  // Y la transparencia: aquí se ve solo la capa de hojas de delante (el resto lo tapa la
-  // profundidad); Quick Look las suma todas y el árbol se deshacía. Su dibujo lleva la
-  // de dos capas y aquí el material la devuelve a la elegida.
-  const alfaQL = a => 1 - (1 - a) * (1 - a);
   const sobrio = c => { const g = gris(c); return c.slice(0, 3).map(x => (g + (x - g) * QL.sat) * QL.luz).concat(c.slice(3)); };
   const FOLLAJE = { uTiempo: { value: 0 }, uPintado: { value: 1 }, uDentro: { value: 1 },
                     uReaviva: { value: 0 }, uSat: { value: 1 / QL.sat }, uLuz: { value: 1 / QL.luz },
@@ -390,27 +386,6 @@
     m.onBeforeCompile = reavivar;
     m.customProgramCacheKey = () => 'cespedOL';
     m.needsUpdate = true;
-  }
-  // La transparencia de los árboles, dentro del dibujo de las hojas: Quick Look saca la
-  // de una copa solo del alfa de su dibujo (la del material, el 60 % elegido, la tiraba)
-  const DESVAIDAS = new Map();
-  function desvaida(tex, a) {
-    if (tex.userData && tex.userData.desvaida) return tex;
-    const clave = tex.uuid + '·' + a;
-    if (DESVAIDAS.has(clave)) return DESVAIDAS.get(clave);
-    const img = tex.image;
-    if (!img || !img.width) return tex;
-    const cv = document.createElement('canvas');
-    cv.width = img.width; cv.height = img.height;
-    const g = cv.getContext('2d');
-    g.globalAlpha = a;
-    g.drawImage(img, 0, 0);
-    const t = tex.clone();
-    t.source = new tex.source.constructor(cv);
-    t.userData = { desvaida: true };
-    t.needsUpdate = true;
-    DESVAIDAS.set(clave, t);
-    return t;
   }
   // Las texturas de Revit del estudio (maderas, piedras, pavimentos) son muy pálidas: en
   // Texturas no se leía ni el color de la madera ni la veta. Una copia realzada: su tono
@@ -540,6 +515,7 @@ gl_Position = projectionMatrix * mvPosition;`);
   // La luz que recibe una cara al sol con luz.hdr: medida en las capturas de Iberia
   // (16/11/2026), en Madera (curva neutral) 0,64 y en Texturas (AgX) 0,68
   const CIELO = 0.66;
+  const COPA_AQUI = [0.202, 0.28, 0.168];
   const columnas = (a, b, c) => v => [0, 1, 2].map(i => a[i] * v[0] + b[i] * v[1] + c[i] * v[2]);
   const A_2020 = columnas([0.6274, 0.0691, 0.0164], [0.3293, 0.9195, 0.0880], [0.0433, 0.0113, 0.8956]);
   const DE_2020 = columnas([1.6605, -0.1246, -0.0182], [-0.5876, 1.1329, -0.1006], [-0.0728, -0.0083, 1.1187]);
@@ -589,8 +565,17 @@ gl_Position = projectionMatrix * mvPosition;`);
   // El color (factor lineal del material) con que se ve aquí, a pleno sol
   function comoAqui(m, papel, estilo) {
     let c = [m.color.r, m.color.g, m.color.b];
-    // el follaje de tarjetas, en Texturas, ya lleva su color para Quick Look (QL)
-    if (estilo === 'texturas' && (papel === 'copa' || papel === 'hierba') && m.map) return c;
+    // Las copas de tarjetas, en Texturas: aquí las oscurece y tiñe su sombra de dentro
+    // (color de vértice) y la curva les quita el naranja; Quick Look no tiene ni lo uno
+    // ni lo otro y las ocres salían naranja oscuro. COPA_AQUI: cuánto, ajustado a lo
+    // medido en una captura de 654 Adequa (ocres y verdes, error medio 5,5 de 255).
+    if (estilo === 'texturas' && papel === 'copa' && m.map) {
+      const l = c.map(x => x / QL.luz), gl = gris(l);
+      const delGlb = l.map(x => Math.max(0, gl + (x - gl) / QL.sat));     // sin lo sobrio
+      const t = mediaDe(m.map);
+      return curvaAgx(delGlb.map((x, i) => x * COPA_AQUI[i]), LUZ.texturas.exposicion).map((x, i) => x / t[i]);
+    }
+    if (estilo === 'texturas' && papel === 'hierba' && m.map) return c;
     if (estilo === 'texturas') {
       const g = gris(c);
       if (PAPELES_REVIT.includes(papel)) c = c.map(x => Math.max(0, g + (x - g) * REVIT.sat) * REVIT.luz);
@@ -607,8 +592,7 @@ gl_Position = projectionMatrix * mvPosition;`);
   function paraQuickLook() {
     const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
     const escena = sim && visor[sim], estilo = ESTILO;
-    // Blanco ya va así (casi todo luz propia)
-    if (!escena || !escena.traverse || estilo === 'blanco') return () => {};
+    if (!escena || !escena.traverse) return () => {};
     const antes = new Map();
     escena.traverse(o => {
       if (!o.isMesh || !o.material) return;
@@ -616,8 +600,19 @@ gl_Position = projectionMatrix * mvPosition;`);
         if (antes.has(m) || !m.color || !m.emissive) continue;
         const papel = (m.name || '').split(';')[0];
         if (papel === 'vidrio' || papel === 'lineas') continue;
+        const hoja = (papel === 'copa' || papel === 'hierba') && !!m.map;
+        // Blanco ya va con casi todo luz propia: solo cambian sus hojas
+        if (estilo === 'blanco' && !hoja) continue;
         antes.set(m, { color: m.color.clone(), emisivo: m.emissive.clone(), mapa: m.emissiveMap,
-                       fuerza: m.emissiveIntensity });
+                       fuerza: m.emissiveIntensity, dibujo: m.map, transparente: m.transparent,
+                       corte: m.alphaTest, opacidad: m.opacity });
+        if (hoja) {
+          // Las hojas, recortadas y opacas: Quick Look no ordena las tarjetas
+          // transparentes que se solapan (se pintaban unas sobre otras, con halos
+          // claros, porque la luz propia brillaba también en lo casi transparente)
+          m.transparent = false; m.opacity = 1; m.alphaTest = 0.5;
+        }
+        if (estilo === 'blanco') continue;
         const v = comoAqui(m, papel, estilo);
         m.color.setRGB(v[0] * QL_LUZ.sol, v[1] * QL_LUZ.sol, v[2] * QL_LUZ.sol);
         m.emissive.setRGB(v[0] * QL_LUZ.propia, v[1] * QL_LUZ.propia, v[2] * QL_LUZ.propia);
@@ -627,9 +622,10 @@ gl_Position = projectionMatrix * mvPosition;`);
     });
     return () => {
       for (const [m, a] of antes) {
-        const cambia = m.emissiveMap !== a.mapa;
+        const cambia = m.emissiveMap !== a.mapa || m.map !== a.dibujo || m.transparent !== a.transparente;
         m.color.copy(a.color); m.emissive.copy(a.emisivo);
         m.emissiveMap = a.mapa; m.emissiveIntensity = a.fuerza;
+        m.map = a.dibujo; m.transparent = a.transparente; m.alphaTest = a.corte; m.opacity = a.opacidad;
         if (cambia) m.needsUpdate = true;
       }
     };
@@ -684,13 +680,11 @@ gl_Position = projectionMatrix * mvPosition;`);
           // profundidad (las hojas de detrás salían encima de las de delante) y quita el
           // recorte en cuanto no es MASK (setAlphaCutoff no vale). Aquí, los dos: lo
           // hueco no se pinta ni tapa, las hojas se ven bien y el edificio, a través.
-          // Y la transparencia va en el dibujo (desvaida, la de alfaQL), que es la que
-          // respeta Quick Look; aquí el material la devuelve a la elegida.
+          // (En Quick Look van recortadas y opacas: paraQuickLook.)
           if (m.name && m.name.startsWith('copa') && m.map && m.transparent) {
-            const aq = alfaQL(ALFA_ARBOLES);
-            const t = desvaida(m.map, aq), op = ALFA_ARBOLES / aq, corte = 0.5 * ALFA_ARBOLES;
-            if (m.map !== t || m.opacity !== op || m.alphaTest !== corte || !m.depthWrite) {
-              m.map = t; m.opacity = op; m.alphaTest = corte; m.depthWrite = true; m.needsUpdate = true;
+            const corte = 0.5 * m.opacity;
+            if (m.alphaTest !== corte || !m.depthWrite) {
+              m.alphaTest = corte; m.depthWrite = true; m.needsUpdate = true;
             }
           }
           // Las texturas de Revit, realzadas (en Texturas: en los otros modos van sin
