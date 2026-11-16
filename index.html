@@ -241,6 +241,8 @@
   }
 
   const ORIGINAL = new Map();
+  // GLB con el follaje de tarjetas (desde el 16/11/2026): su césped es la teja pintada
+  let FOLLAJE_NUEVO = false;
   let VETA = null;
 
   // El de las aristas (una línea, sin emisivo) hace saltar a model-viewer al leerlo:
@@ -265,6 +267,7 @@
                         emisivo: emisivoDe(m) });
       if (m.name === 'lineas' && m.setAlphaMode) m.setAlphaMode('BLEND');   // para poder apagarlas
     }
+    FOLLAJE_NUEVO = [...ORIGINAL].some(([m, o]) => m.name.startsWith('hierba') || (m.name.startsWith('copa') && !!o.textura));
     try { VETA = await visor.createTexture(lienzoDeVeta()); } catch (e) { VETA = null; }
     const caja = document.getElementById('estilos');
     caja.style.display = 'flex';
@@ -332,7 +335,54 @@
   // Texturas, la luz pintada: lo que queda en sombra tira a azul verdoso y lo que da
   // el sol, a amarillo, como en los árboles pintados. Es de la página: en la AR de
   // Android se ve (es esta misma escena); Quick Look (iPhone) los enseña quietos.
-  const FOLLAJE = { uTiempo: { value: 0 }, uPintado: { value: 1 }, uDentro: { value: 1 } };
+  // Quick Look (iPhone) se lleva el material tal cual: sin la sombra de dentro (color de
+  // vértice), sin este shader y sin la curva AgX del visor. El follaje y el césped salían
+  // chillones. Su material va más sobrio (QL, en vestir) y aquí el shader lo devuelve,
+  // exacto, a lo de siempre (uReaviva: en Texturas, que es el que lo lleva).
+  const QL = { sat: 0.55, luz: 0.9 };
+  const sobrio = c => { const g = gris(c); return c.slice(0, 3).map(x => (g + (x - g) * QL.sat) * QL.luz).concat(c.slice(3)); };
+  const FOLLAJE = { uTiempo: { value: 0 }, uPintado: { value: 1 }, uDentro: { value: 1 },
+                    uReaviva: { value: 0 }, uSat: { value: 1 / QL.sat }, uLuz: { value: 1 / QL.luz } };
+  const REAVIVA_UNIF = 'uniform float uReaviva;\nuniform float uSat;\nuniform float uLuz;';
+  const REAVIVA = `{ vec3 c = diffuseColor.rgb * mix(1.0, uLuz, uReaviva);
+  float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  diffuseColor.rgb = max(mix(c, vec3(g) + (c - vec3(g)) * uSat, uReaviva), 0.0); }`;
+  const reavivar = sh => {
+    sh.uniforms.uReaviva = FOLLAJE.uReaviva; sh.uniforms.uSat = FOLLAJE.uSat; sh.uniforms.uLuz = FOLLAJE.uLuz;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\n' + REAVIVA_UNIF)
+      // antes del dibujo: se reaviva solo el color del material (exacto, con cualquier textura)
+      .replace('#include <map_fragment>', REAVIVA + '\n#include <map_fragment>');
+  };
+  // El césped de los GLB nuevos: solo el color (no tiene viento)
+  function cespedVivo(m) {
+    if (m.userData.vivo) return;
+    m.userData.vivo = true;
+    m.onBeforeCompile = reavivar;
+    m.customProgramCacheKey = () => 'cespedOL';
+    m.needsUpdate = true;
+  }
+  // La transparencia de los árboles, dentro del dibujo de las hojas: Quick Look saca la
+  // de una copa solo del alfa de su dibujo (la del material, el 60 % elegido, la tiraba)
+  const DESVAIDAS = new Map();
+  function desvaida(tex, a) {
+    if (tex.userData && tex.userData.desvaida) return tex;
+    const clave = tex.uuid + '·' + a;
+    if (DESVAIDAS.has(clave)) return DESVAIDAS.get(clave);
+    const img = tex.image;
+    if (!img || !img.width) return tex;
+    const cv = document.createElement('canvas');
+    cv.width = img.width; cv.height = img.height;
+    const g = cv.getContext('2d');
+    g.globalAlpha = a;
+    g.drawImage(img, 0, 0);
+    const t = tex.clone();
+    t.source = new tex.source.constructor(cv);
+    t.userData = { desvaida: true };
+    t.needsUpdate = true;
+    DESVAIDAS.set(clave, t);
+    return t;
+  }
   function follajeVivo(m) {
     if (m.userData.vivo) return;
     m.userData.vivo = true;
@@ -340,6 +390,7 @@
       sh.uniforms.uTiempo = FOLLAJE.uTiempo;
       sh.uniforms.uPintado = FOLLAJE.uPintado;
       sh.uniforms.uDentro = FOLLAJE.uDentro;
+      reavivar(sh);
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
 uniform float uTiempo;
@@ -434,6 +485,7 @@ gl_Position = projectionMatrix * mvPosition;`);
           mats.forEach(follajeVivo);
           follaje = true;
         }
+        if (FOLLAJE_NUEVO) mats.filter(m => m.name && m.name.startsWith('verde')).forEach(cespedVivo);
         // las caras, un pelo hacia atrás: la arista se ve entera y no a trozos
         for (const m of mats) {
           m.polygonOffset = si; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1;
@@ -441,9 +493,13 @@ gl_Position = projectionMatrix * mvPosition;`);
           // profundidad (las hojas de detrás salían encima de las de delante) y quita el
           // recorte en cuanto no es MASK (setAlphaCutoff no vale). Aquí, los dos: lo
           // hueco no se pinta ni tapa, las hojas se ven bien y el edificio, a través.
-          if (m.name && m.name.startsWith('copa') && m.map && m.transparent
-              && (m.alphaTest !== 0.5 || !m.depthWrite)) {
-            m.alphaTest = 0.5; m.depthWrite = true; m.needsUpdate = true;
+          // Y la transparencia va en el dibujo (desvaida), no en el material: es la que
+          // respeta Quick Look; aquí sale igual (el dibujo × 1).
+          if (m.name && m.name.startsWith('copa') && m.map && m.transparent) {
+            const t = desvaida(m.map, ALFA_ARBOLES), corte = 0.5 * ALFA_ARBOLES;
+            if (m.map !== t || m.opacity !== 1 || m.alphaTest !== corte || !m.depthWrite) {
+              m.map = t; m.opacity = 1; m.alphaTest = corte; m.depthWrite = true; m.needsUpdate = true;
+            }
           }
           // La sombra de dentro del follaje (su color de vértice), en Madera no: la
           // madera salía sucia, color musgo
@@ -457,6 +513,7 @@ gl_Position = projectionMatrix * mvPosition;`);
     });
     FOLLAJE.uPintado.value = estilo === 'texturas' ? 1 : 0;
     FOLLAJE.uDentro.value = estilo === 'blanco' ? 0 : 1;
+    FOLLAJE.uReaviva.value = estilo === 'texturas' && FOLLAJE_NUEVO ? 1 : 0;
     if (follaje) soplar(escena);
     if (escena.queueRender) escena.queueRender();
   }
@@ -494,6 +551,7 @@ gl_Position = projectionMatrix * mvPosition;`);
       // (el follaje de tarjetas, no: es pintado, y apagado se veía mustio)
       const d = recortada ? 0 : DESATURA;
       c = c.slice(0, 3).map(x => x + (g - x) * d).concat([alfaCopa != null ? alfaCopa : c[3]]);
+      if (FOLLAJE_NUEVO && (recortada || papel === 'verde')) c = sobrio(c);
       pbr.setBaseColorFactor(c);
       pbr.setRoughnessFactor(o.rugosidad);
       if (tex) tex.setTexture(o.textura);
