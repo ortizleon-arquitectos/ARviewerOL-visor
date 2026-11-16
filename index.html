@@ -319,8 +319,12 @@
     texturas: { curva: 'agx', exposicion: 1.25, sombra: 0.8 },
     madera: { curva: 'neutral', exposicion: 1.05, sombra: 1 },
   };
-  // Texturas: los colores de aspecto de Revit, un poco menos saturados
-  const DESATURA = 0.18;
+  // Texturas: los colores de aspecto de Revit tal cual (es lo que se lleva Quick Look).
+  // La curva AgX del visor los apagaba y oscurecía (madera, suelos y pavimentos salían
+  // más sosos que en Revit): lo compensa el shader de REVIT, solo en el visor.
+  const DESATURA = 0;
+  const REVIT = { sat: 1.08, luz: 1.1 };
+  const PAPELES_REVIT = ['edificio', 'entorno', 'terreno', 'agua', 'tronco'];
   // En Texturas, los árboles de verdad, en los GLB de antes del 06/11/2026 (los traían
   // en el verde pálido de maqueta; los nuevos traen el suyo, sacado de Revit)
   const ARBOLES = { copa: [[112, 140, 86]], tronco: [[118, 98, 78]] };
@@ -339,10 +343,15 @@
   // vértice), sin este shader y sin la curva AgX del visor. El follaje y el césped salían
   // chillones. Su material va más sobrio (QL, en vestir) y aquí el shader lo devuelve,
   // exacto, a lo de siempre (uReaviva: en Texturas, que es el que lo lleva).
-  const QL = { sat: 0.55, luz: 0.9 };
+  const QL = { sat: 0.8, luz: 0.9 };
+  // Y la transparencia: aquí se ve solo la capa de hojas de delante (el resto lo tapa la
+  // profundidad); Quick Look las suma todas y el árbol se deshacía. Su dibujo lleva la
+  // de dos capas y aquí el material la devuelve a la elegida.
+  const alfaQL = a => 1 - (1 - a) * (1 - a);
   const sobrio = c => { const g = gris(c); return c.slice(0, 3).map(x => (g + (x - g) * QL.sat) * QL.luz).concat(c.slice(3)); };
   const FOLLAJE = { uTiempo: { value: 0 }, uPintado: { value: 1 }, uDentro: { value: 1 },
-                    uReaviva: { value: 0 }, uSat: { value: 1 / QL.sat }, uLuz: { value: 1 / QL.luz } };
+                    uReaviva: { value: 0 }, uSat: { value: 1 / QL.sat }, uLuz: { value: 1 / QL.luz },
+                    uRevit: { value: 0 } };
   const REAVIVA_UNIF = 'uniform float uReaviva;\nuniform float uSat;\nuniform float uLuz;';
   const REAVIVA = `{ vec3 c = diffuseColor.rgb * mix(1.0, uLuz, uReaviva);
   float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -355,6 +364,21 @@
       .replace('#include <map_fragment>', REAVIVA + '\n#include <map_fragment>');
   };
   // El césped de los GLB nuevos: solo el color (no tiene viento)
+  function revitVivo(m) {
+    if (m.userData.vivo) return;
+    m.userData.vivo = true;
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uRevit = FOLLAJE.uRevit;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uRevit;')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+{ vec3 c = diffuseColor.rgb;
+  float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  diffuseColor.rgb = mix(c, max(vec3(g) + (c - vec3(g)) * ${REVIT.sat.toFixed(3)}, 0.0) * ${REVIT.luz.toFixed(3)}, uRevit); }`);
+    };
+    m.customProgramCacheKey = () => 'revitOL';
+    m.needsUpdate = true;
+  }
   function cespedVivo(m) {
     if (m.userData.vivo) return;
     m.userData.vivo = true;
@@ -486,6 +510,7 @@ gl_Position = projectionMatrix * mvPosition;`);
           follaje = true;
         }
         if (FOLLAJE_NUEVO) mats.filter(m => m.name && m.name.startsWith('verde')).forEach(cespedVivo);
+        mats.filter(m => m.name && PAPELES_REVIT.includes(m.name.split(';')[0])).forEach(revitVivo);
         // las caras, un pelo hacia atrás: la arista se ve entera y no a trozos
         for (const m of mats) {
           m.polygonOffset = si; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1;
@@ -493,12 +518,13 @@ gl_Position = projectionMatrix * mvPosition;`);
           // profundidad (las hojas de detrás salían encima de las de delante) y quita el
           // recorte en cuanto no es MASK (setAlphaCutoff no vale). Aquí, los dos: lo
           // hueco no se pinta ni tapa, las hojas se ven bien y el edificio, a través.
-          // Y la transparencia va en el dibujo (desvaida), no en el material: es la que
-          // respeta Quick Look; aquí sale igual (el dibujo × 1).
+          // Y la transparencia va en el dibujo (desvaida, la de alfaQL), que es la que
+          // respeta Quick Look; aquí el material la devuelve a la elegida.
           if (m.name && m.name.startsWith('copa') && m.map && m.transparent) {
-            const t = desvaida(m.map, ALFA_ARBOLES), corte = 0.5 * ALFA_ARBOLES;
-            if (m.map !== t || m.opacity !== 1 || m.alphaTest !== corte || !m.depthWrite) {
-              m.map = t; m.opacity = 1; m.alphaTest = corte; m.depthWrite = true; m.needsUpdate = true;
+            const aq = alfaQL(ALFA_ARBOLES);
+            const t = desvaida(m.map, aq), op = ALFA_ARBOLES / aq, corte = 0.5 * ALFA_ARBOLES;
+            if (m.map !== t || m.opacity !== op || m.alphaTest !== corte || !m.depthWrite) {
+              m.map = t; m.opacity = op; m.alphaTest = corte; m.depthWrite = true; m.needsUpdate = true;
             }
           }
           // La sombra de dentro del follaje (su color de vértice), en Madera no: la
@@ -514,6 +540,7 @@ gl_Position = projectionMatrix * mvPosition;`);
     FOLLAJE.uPintado.value = estilo === 'texturas' ? 1 : 0;
     FOLLAJE.uDentro.value = estilo === 'blanco' ? 0 : 1;
     FOLLAJE.uReaviva.value = estilo === 'texturas' && FOLLAJE_NUEVO ? 1 : 0;
+    FOLLAJE.uRevit.value = estilo === 'texturas' ? 1 : 0;
     if (follaje) soplar(escena);
     if (escena.queueRender) escena.queueRender();
   }
@@ -549,7 +576,8 @@ gl_Position = projectionMatrix * mvPosition;`);
       let c = ARBOLES[papel] && hex == null ? deSRGB(ARBOLES[papel][0]) : o.color.slice();
       const g = gris(c);
       // (el follaje de tarjetas, no: es pintado, y apagado se veía mustio)
-      const d = recortada ? 0 : DESATURA;
+      // (el césped, como estaba: su verde ya era el bueno)
+      const d = recortada ? 0 : papel === 'verde' ? 0.18 : DESATURA;
       c = c.slice(0, 3).map(x => x + (g - x) * d).concat([alfaCopa != null ? alfaCopa : c[3]]);
       if (FOLLAJE_NUEVO && (recortada || papel === 'verde')) c = sobrio(c);
       pbr.setBaseColorFactor(c);
