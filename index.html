@@ -215,6 +215,8 @@
   };
   // La transparencia de los árboles: la elige el estudio al publicar (en proyecto.json)
   const ALFA_ARBOLES = typeof p.alfa_arboles === 'number' && p.alfa_arboles >= 0.2 && p.alfa_arboles <= 1 ? p.alfa_arboles : 0.8;
+  // Y la del vidrio (null: como en cada modo; en Texturas, la de su material de Revit)
+  const ALFA_VIDRIO = typeof p.alfa_vidrio === 'number' && p.alfa_vidrio >= 0.1 && p.alfa_vidrio <= 1 ? p.alfa_vidrio : null;
 
   function lienzoDeVeta() {
     const N = 512, cv = document.createElement('canvas');
@@ -408,6 +410,52 @@
     t.userData = { desvaida: true };
     t.needsUpdate = true;
     DESVAIDAS.set(clave, t);
+    return t;
+  }
+  // Las texturas de Revit del estudio (maderas, piedras, pavimentos) son muy pálidas: en
+  // Texturas no se leía ni el color de la madera ni la veta. Una copia realzada: su tono
+  // medio, más vivo y algo más oscuro, y el dibujo con más contraste (sin cambiarle el
+  // tono a cada píxel, que sacaba verdes y rosas en la piedra). Va en el dibujo: lo
+  // mismo en el visor, en Android y en Quick Look. Cuánto, según la textura: el color,
+  // hasta un tope (croma; la madera de Brunete, que ya lo tiene, salía naranja), la veta
+  // hasta un contraste (veta: su desviación, en 0-255) y solo se oscurece lo muy claro.
+  // Probado con las de 654 Adequa y 661 Brunete (16/11/2026).
+  const REALCE = { contraste: 2.4, color: 2.8, croma: 26, veta: 16, claro: 190, luz: 0.86 };
+  const REALZADAS = new Map();
+  function realzada(tex) {
+    if (tex.userData && tex.userData.realzada) return tex;
+    if (REALZADAS.has(tex.uuid)) return REALZADAS.get(tex.uuid);
+    const img = tex.image;
+    if (!img || !img.width) return tex;
+    let t = tex;
+    try {
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      const g = cv.getContext('2d');
+      g.drawImage(img, 0, 0);
+      const im = g.getImageData(0, 0, cv.width, cv.height), d = im.data, n = d.length / 4, m = [0, 0, 0];
+      for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) m[k] += d[i + k];
+      for (let k = 0; k < 3; k++) m[k] /= n;
+      const y = 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2];
+      let v = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const l = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2] - y;
+        v += l * l;
+      }
+      const sd = Math.sqrt(v / n), croma = Math.max(...m.map(x => Math.abs(x - y)));
+      const S = croma > 0.5 ? Math.max(1, Math.min(REALCE.color, REALCE.croma / croma)) : 1;
+      const K = Math.max(1, Math.min(REALCE.contraste, REALCE.veta / Math.max(sd, 0.5)));
+      const L = Math.max(REALCE.luz, Math.min(1, REALCE.claro / Math.max(y, 1)));
+      const M = m.map(x => (y + (x - y) * S) * L);
+      for (let i = 0; i < d.length; i += 4)
+        for (let k = 0; k < 3; k++) d[i + k] = Math.max(0, Math.min(255, M[k] + (d[i + k] - m[k]) * K));
+      g.putImageData(im, 0, 0);
+      t = tex.clone();
+      t.source = new tex.source.constructor(cv);
+      t.userData = { realzada: true };
+      t.needsUpdate = true;
+    } catch (e) { t = tex; }
+    REALZADAS.set(tex.uuid, t);
     return t;
   }
   function follajeVivo(m) {
@@ -645,6 +693,13 @@ gl_Position = projectionMatrix * mvPosition;`);
               m.map = t; m.opacity = op; m.alphaTest = corte; m.depthWrite = true; m.needsUpdate = true;
             }
           }
+          // Las texturas de Revit, realzadas (en Texturas: en los otros modos van sin
+          // dibujo o con la veta de la maqueta, que pone vestir)
+          if (estilo === 'texturas' && m.map && !(m.map.userData && m.map.userData.realzada)
+              && m.name && PAPELES_REVIT.includes(m.name.split(';')[0])) {
+            const t = realzada(m.map);
+            if (t !== m.map) { m.map = t; m.needsUpdate = true; }
+          }
           // La sombra de dentro del follaje (su color de vértice), en Madera no: la
           // madera salía sucia, color musgo
           if (m.name && m.name.startsWith('copa')) {
@@ -678,6 +733,7 @@ gl_Position = projectionMatrix * mvPosition;`);
     if (papel === 'lineas') return;           // las aristas van por escenaDelEstilo()
     const tex = pbr.baseColorTexture;
     const alfaCopa = papel === 'copa' ? ALFA_ARBOLES : null;
+    const alfaVidrio = papel === 'vidrio' ? ALFA_VIDRIO : null;
     // Las copas y las matas de hierba de los GLB desde el 16/11/2026 son tarjetas con
     // el dibujo de sus hojas, recortado por su transparencia: el dibujo va en todos
     // los modos (sin él serían cuadrados) y el recorte también, con o sin transparencia
@@ -696,18 +752,19 @@ gl_Position = projectionMatrix * mvPosition;`);
       // (el follaje de tarjetas, no: es pintado, y apagado se veía mustio)
       // (el césped, como estaba: su verde ya era el bueno)
       const d = recortada ? 0 : papel === 'verde' ? 0.18 : DESATURA;
-      c = c.slice(0, 3).map(x => x + (g - x) * d).concat([alfaCopa != null ? alfaCopa : c[3]]);
+      c = c.slice(0, 3).map(x => x + (g - x) * d).concat([alfaCopa != null ? alfaCopa : alfaVidrio != null ? alfaVidrio : c[3]]);
       if (FOLLAJE_NUEVO && (recortada || papel === 'verde')) c = sobrio(c);
       pbr.setBaseColorFactor(c);
       pbr.setRoughnessFactor(o.rugosidad);
       if (tex) tex.setTexture(o.textura);
       if (alfaCopa != null || recortada) ponerAlfa(alfaCopa);
+      else if (alfaVidrio != null && m.setAlphaMode) m.setAlphaMode(alfaVidrio < 1 ? 'BLEND' : 'OPAQUE');
       else if (m.setAlphaMode && o.alfa) m.setAlphaMode(o.alfa);
     } else if (estilo === 'blanco') {
       const [cTabla, aTabla] = BLANCO[papel] || BLANCO.edificio;
       const vidrio = papel === 'vidrio';
       const c = deSRGB(vidrio ? cTabla : colorDe(hex, papel));
-      const a = alfaCopa != null ? alfaCopa : aTabla;
+      const a = alfaCopa != null ? alfaCopa : alfaVidrio != null ? alfaVidrio : aTabla;
       ponerAlfa(a);
       pbr.setBaseColorFactor(vidrio ? c.slice(0, 3).concat([a])
                                     : c.slice(0, 3).map(x => x * BLANCO_LUZ.sol).concat([a == null ? 1 : a]));
@@ -718,7 +775,7 @@ gl_Position = projectionMatrix * mvPosition;`);
       const [c0, aTabla] = MADERA[papel] || MADERA.edificio;
       // el dibujo de las hojas es gris (oscurece lo que pinta): su madera, más clara
       const c = recortada ? c0.map(x => Math.min(255, Math.round(x * 1.22))) : c0;
-      const a = alfaCopa != null ? alfaCopa : aTabla;
+      const a = alfaCopa != null ? alfaCopa : alfaVidrio != null ? alfaVidrio : aTabla;
       ponerAlfa(a);
       pbr.setBaseColorFactor(deSRGB(c, a));
       pbr.setRoughnessFactor(papel === 'vidrio' ? 0.2 : papel === 'copa' ? 1 : 0.8);
