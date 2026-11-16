@@ -203,14 +203,14 @@
   // Blanco, para lo que no trae su color de Revit: blanco, como pinta «Línea oculta»
   const BLANCO = {
     edificio: [[255, 255, 255]], entorno: [[255, 255, 255]], terreno: [[255, 255, 255]],
-    agua: [[215, 235, 240]], verde: [[226, 234, 214]],
+    agua: [[215, 235, 240]], verde: [[226, 234, 214]], hierba: [[206, 222, 190]],
     copa: [[200, 210, 150]], tronco: [[175, 160, 140]], vidrio: [[230, 236, 240], 0.35],
   };
   // Madera: el agua y la vegetación (césped, jardineras) en maderas más oscuras, para
   // que se distingan del resto, como en una maqueta de taller
   const MADERA = {
     edificio: [[240, 229, 207]], entorno: [[228, 212, 184]], terreno: [[220, 201, 168]],
-    verde: [[196, 170, 126]], agua: [[152, 128, 98]],
+    verde: [[196, 170, 126]], agua: [[152, 128, 98]], hierba: [[184, 158, 116]],
     copa: [[198, 180, 138]], tronco: [[178, 152, 114]], vidrio: [[234, 238, 236], 0.3],
   };
   // La transparencia de los árboles: la elige el estudio al publicar (en proyecto.json)
@@ -293,7 +293,7 @@
       if (!o) continue;                         // un material que no se ha podido cargar
       try { vestir(m, o, estilo); } catch (e) { console.error('estilo', m.name, e); }
     }
-    lineasVisibles(estilo === 'blanco');
+    escenaDelEstilo(estilo);
     // Las aristas a resolución entera: model-viewer baja la resolución cuando el modelo
     // pesa (hasta la mitad) y una línea de un píxel salía gruesa y gris. Solo en Blanco,
     // que es el que las lleva: en los otros modos el móvil va más suelto.
@@ -325,14 +325,94 @@
   // luz propia (emisiva) y el sol solo la modela un pelo, para que se lea el volumen.
   const BLANCO_LUZ = { propia: 0.86, sol: 0.16 };
 
+  // ── El viento y la luz pintada del follaje ──────────────────────────────
+  // Las copas y las matas del césped (GLB desde el 16/11/2026) traen en su segunda
+  // uv cuánto se mece cada vértice con el árbol (x: los altos, más) y cuánto tiembla
+  // como hoja suelta (y: el fleco). El viento se lo da aquí un trozo de shader; y en
+  // Texturas, la luz pintada: lo que queda en sombra tira a azul verdoso y lo que da
+  // el sol, a amarillo, como en los árboles pintados. Es de la página: en la AR de
+  // Android se ve (es esta misma escena); Quick Look (iPhone) los enseña quietos.
+  const FOLLAJE = { uTiempo: { value: 0 }, uPintado: { value: 1 }, uDentro: { value: 1 } };
+  function follajeVivo(m) {
+    if (m.userData.vivo) return;
+    m.userData.vivo = true;
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uTiempo = FOLLAJE.uTiempo;
+      sh.uniforms.uPintado = FOLLAJE.uPintado;
+      sh.uniforms.uDentro = FOLLAJE.uDentro;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+uniform float uTiempo;
+attribute vec4 _centro;
+#ifndef USE_UV1
+attribute vec2 uv1;
+#endif`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+{ float fase = dot(position.xz, vec2(0.13, 0.09));
+  float mece = uv1.x * uv1.x * (0.6 * sin(uTiempo * 1.1 + fase) + 0.4 * sin(uTiempo * 1.7 + 1.3 * fase));
+  float tiembla = uv1.y * sin(uTiempo * 5.0 + dot(position, vec3(2.3, 1.7, 3.1)));
+  transformed += vec3(0.35 * mece + 0.06 * tiembla, 0.03 * tiembla, 0.18 * mece + 0.05 * tiembla); }`)
+        // Las tarjetas de hojas de las nubes, siempre de cara a la cámara (como en los
+        // árboles pintados: nunca se ven de canto y el borde sale esponjoso desde
+        // cualquier lado). _centro: del vértice al centro de su tarjeta, en vueltas de 8 m.
+        .replace('#include <project_vertex>', `vec4 mvPosition;
+if (dot(_centro.xyz, _centro.xyz) > 0.0) {
+  vec3 hacia = _centro.xyz * 8.0;
+  vec3 c = transformed + hacia;
+  vec2 q = fract(uv * 2.0) * 2.0 - 1.0;
+  float a = length(hacia) / max(length(q), 0.5);
+  float giro = (fract(sin(dot(position + hacia, vec3(12.99, 78.23, 37.72))) * 43758.5) - 0.5) * 1.2;
+  vec2 e = vec2(q.x, -q.y) * a;
+  e = vec2(e.x * cos(giro) - e.y * sin(giro), e.x * sin(giro) + e.y * cos(giro));
+  mvPosition = modelViewMatrix * vec4(c, 1.0);
+  mvPosition.xy += e * length(modelViewMatrix[0].xyz);
+} else {
+  mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+}
+gl_Position = projectionMatrix * mvPosition;`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uPintado;\nuniform float uDentro;')
+        // lo que mira hacia atrás (la cara de detrás de cada nube, que asoma por el
+        // borde), a la sombra de dentro: si no, el cielo de detrás lo aclaraba
+        .replace('#include <opaque_fragment>', `{ float cara = dot(normalize(vNormal), normalize(vViewPosition));
+  outgoingLight *= mix(1.0, mix(0.5, 1.0, smoothstep(-0.35, 0.35, cara)), uDentro); }
+{ float l = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
+  vec3 pintado = mix(outgoingLight * vec3(0.8, 0.96, 1.2), outgoingLight * vec3(1.12, 1.06, 0.8), smoothstep(0.06, 0.5, l));
+  pintado = max(mix(vec3(l), pintado, 1.35), 0.0);      // más vivo: la curva AgX lo apaga
+  outgoingLight = mix(outgoingLight, pintado, uPintado); }
+#include <opaque_fragment>`);
+    };
+    m.customProgramCacheKey = () => 'follajeOL';
+    m.needsUpdate = true;
+  }
+  // Mientras se ve la página, unas 30 veces por segundo (model-viewer solo dibuja
+  // cuando algo cambia; más, y el móvil gasta batería para nada)
+  let soplando = false;
+  function soplar(escena) {
+    if (soplando || !escena.queueRender) return;
+    soplando = true;
+    let antes = 0;
+    const paso = t => {
+      if (!document.hidden && t - antes > 33) {
+        antes = t;
+        FOLLAJE.uTiempo.value = t / 1000;
+        escena.queueRender();
+      }
+      requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
+  }
+
   // Las aristas son líneas, y el material de una línea no lo cambia la API de
   // model-viewer (three.js le hace su propia copia): se encienden y apagan en la
   // escena. Sirve también en la AR de Android (WebXR, la misma escena); Quick Look
-  // (iPhone) no lleva líneas.
-  function lineasVisibles(si) {
+  // (iPhone) no lleva líneas. Aquí va también lo del follaje que la API no alcanza.
+  function escenaDelEstilo(estilo) {
+    const si = estilo === 'blanco';
     const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
     const escena = sim && visor[sim];
     if (!escena || !escena.traverse) return;
+    let follaje = false;
     escena.traverse(o => {
       if (o.isLineSegments || o.isLine) {
         o.visible = si;
@@ -344,12 +424,40 @@
           o.material.transparent = false; o.material.opacity = 1; o.material.needsUpdate = true;
         }
       } else if (o.isMesh && o.material) {
+        const mats = [].concat(o.material);
+        // Las matas del césped: en Madera, no (una maqueta de taller no lleva hierba;
+        // salían como migas)
+        if (mats.some(m => m.name && m.name.startsWith('hierba'))) o.visible = estilo !== 'madera';
+        // el follaje con peso de viento: vivo
+        if (o.geometry && o.geometry.attributes.uv1
+            && mats.some(m => m.name && (m.name.startsWith('copa') || m.name.startsWith('hierba')))) {
+          mats.forEach(follajeVivo);
+          follaje = true;
+        }
         // las caras, un pelo hacia atrás: la arista se ve entera y no a trozos
-        for (const m of [].concat(o.material)) {
+        for (const m of mats) {
           m.polygonOffset = si; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1;
+          // Las copas de tarjetas, transparentes: model-viewer deja de escribir la
+          // profundidad (las hojas de detrás salían encima de las de delante) y quita el
+          // recorte en cuanto no es MASK (setAlphaCutoff no vale). Aquí, los dos: lo
+          // hueco no se pinta ni tapa, las hojas se ven bien y el edificio, a través.
+          if (m.name && m.name.startsWith('copa') && m.map && m.transparent
+              && (m.alphaTest !== 0.5 || !m.depthWrite)) {
+            m.alphaTest = 0.5; m.depthWrite = true; m.needsUpdate = true;
+          }
+          // La sombra de dentro del follaje (su color de vértice), en Madera no: la
+          // madera salía sucia, color musgo
+          if (m.name && m.name.startsWith('copa')) {
+            if (m.userData.colorVertice == null) m.userData.colorVertice = !!m.vertexColors;
+            const vc = m.userData.colorVertice && estilo !== 'madera';
+            if (m.vertexColors !== vc) { m.vertexColors = vc; m.needsUpdate = true; }
+          }
         }
       }
     });
+    FOLLAJE.uPintado.value = estilo === 'texturas' ? 1 : 0;
+    FOLLAJE.uDentro.value = estilo === 'blanco' ? 0 : 1;
+    if (follaje) soplar(escena);
     if (escena.queueRender) escena.queueRender();
   }
 
@@ -365,20 +473,31 @@
     // El nombre es «papel» o «papel;rrggbb», con el color del material en la
     // «Línea oculta» de Revit (su relleno sólido)
     const pbr = m.pbrMetallicRoughness, [papel, hex] = m.name.split(';');
-    if (papel === 'lineas') return;           // las aristas van por lineasVisibles()
+    if (papel === 'lineas') return;           // las aristas van por escenaDelEstilo()
     const tex = pbr.baseColorTexture;
     const alfaCopa = papel === 'copa' ? ALFA_ARBOLES : null;
-    const ponerAlfa = a => { if (m.setAlphaMode) m.setAlphaMode(a != null && a < 1 ? 'BLEND' : 'OPAQUE'); };
+    // Las copas y las matas de hierba de los GLB desde el 16/11/2026 son tarjetas con
+    // el dibujo de sus hojas, recortado por su transparencia: el dibujo va en todos
+    // los modos (sin él serían cuadrados) y el recorte también, con o sin transparencia
+    const recortada = (papel === 'copa' || papel === 'hierba') && !!o.textura;
+    const ponerAlfa = a => {
+      if (!m.setAlphaMode) return;
+      // (con BLEND, el recorte lo pone escenaDelEstilo: model-viewer lo quita)
+      if (recortada) m.setAlphaMode(a != null && a < 1 ? 'BLEND' : 'MASK');
+      else m.setAlphaMode(a != null && a < 1 ? 'BLEND' : 'OPAQUE');
+    };
     let emisivo = o.emisivo;
 
     if (estilo === 'texturas') {
       let c = ARBOLES[papel] && hex == null ? deSRGB(ARBOLES[papel][0]) : o.color.slice();
       const g = gris(c);
-      c = c.slice(0, 3).map(x => x + (g - x) * DESATURA).concat([alfaCopa != null ? alfaCopa : c[3]]);
+      // (el follaje de tarjetas, no: es pintado, y apagado se veía mustio)
+      const d = recortada ? 0 : DESATURA;
+      c = c.slice(0, 3).map(x => x + (g - x) * d).concat([alfaCopa != null ? alfaCopa : c[3]]);
       pbr.setBaseColorFactor(c);
       pbr.setRoughnessFactor(o.rugosidad);
       if (tex) tex.setTexture(o.textura);
-      if (alfaCopa != null) ponerAlfa(alfaCopa);
+      if (alfaCopa != null || recortada) ponerAlfa(alfaCopa);
       else if (m.setAlphaMode && o.alfa) m.setAlphaMode(o.alfa);
     } else if (estilo === 'blanco') {
       const [cTabla, aTabla] = BLANCO[papel] || BLANCO.edificio;
@@ -390,15 +509,17 @@
                                     : c.slice(0, 3).map(x => x * BLANCO_LUZ.sol).concat([a == null ? 1 : a]));
       if (!vidrio) emisivo = c.slice(0, 3).map(x => x * BLANCO_LUZ.propia);
       pbr.setRoughnessFactor(vidrio ? 0.2 : 1);
-      if (tex) tex.setTexture(null);
+      if (tex) tex.setTexture(recortada ? o.textura : null);
     } else {
-      const [c, aTabla] = MADERA[papel] || MADERA.edificio;
+      const [c0, aTabla] = MADERA[papel] || MADERA.edificio;
+      // el dibujo de las hojas es gris (oscurece lo que pinta): su madera, más clara
+      const c = recortada ? c0.map(x => Math.min(255, Math.round(x * 1.22))) : c0;
       const a = alfaCopa != null ? alfaCopa : aTabla;
       ponerAlfa(a);
       pbr.setBaseColorFactor(deSRGB(c, a));
       pbr.setRoughnessFactor(papel === 'vidrio' ? 0.2 : papel === 'copa' ? 1 : 0.8);
-      if (tex) tex.setTexture(papel !== 'vidrio' ? VETA : null);
-      if (tex && tex.texture && tex.texture.sampler) {
+      if (tex) tex.setTexture(recortada ? o.textura : papel !== 'vidrio' ? VETA : null);
+      if (tex && !recortada && tex.texture && tex.texture.sampler) {
         tex.texture.sampler.setWrapS(10497); tex.texture.sampler.setWrapT(10497);   // REPEAT
       }
     }
