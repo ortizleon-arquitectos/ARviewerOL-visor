@@ -298,11 +298,12 @@
     agua: [[215, 235, 240]], verde: [[226, 234, 214]], hierba: [[206, 222, 190]],
     copa: [[200, 210, 150]], tronco: [[175, 160, 140]], vidrio: [[230, 236, 240], 0.35],
   };
-  // Madera: el agua y la vegetación (césped, jardineras) en maderas más oscuras, para
-  // que se distingan del resto, como en una maqueta de taller
+  // Madera: la vegetación (césped, jardineras) en maderas más oscuras, para que se
+  // distinga del resto, como en una maqueta de taller; y el agua, metacrilato azulado y
+  // transparente (hasta el 17/11/2026, madera oscura: la piscina se leía como un hueco)
   const MADERA = {
     edificio: [[240, 229, 207]], entorno: [[228, 212, 184]], terreno: [[220, 201, 168]],
-    verde: [[196, 170, 126]], agua: [[152, 128, 98]], hierba: [[184, 158, 116]],
+    verde: [[196, 170, 126]], agua: [[176, 204, 210], 0.45], hierba: [[184, 158, 116]],
     copa: [[198, 180, 138]], tronco: [[178, 152, 114]], vidrio: [[234, 238, 236], 0.3],
   };
   // La transparencia de los árboles: la elige el estudio al publicar (en proyecto.json)
@@ -496,6 +497,75 @@
   diffuseColor.rgb = mix(c, max(vec3(g) + (c - vec3(g)) * ${REVIT.sat.toFixed(3)}, 0.0) * ${REVIT.luz.toFixed(3)}, uRevit); }`);
     };
     m.customProgramCacheKey = () => 'revitOL';
+    m.needsUpdate = true;
+  }
+  // ── El agua, que se mueve ───────────────────────────────────────────────
+  // Unas olas pequeñas en el shader: seis trenes de onda de 0,45 a 4 m (en metros de
+  // verdad: la posición del modelo, que va en metros y lo encoge el nodo) con algo de
+  // remolino, para que no se lea la repetición. Tuercen la normal, y el reflejo del
+  // cielo hace el dibujo del agua (como en la foto de referencia del 17/11/2026). La que
+  // trae textura de Revit (las cáusticas de una piscina), además, con dos copias que se
+  // deslizan despacio y se cruzan. De lejos se apagan las olas que ya no caben en un
+  // píxel (fwidth): si no, el agua centelleaba. Texturas, con todo; Madera, metacrilato
+  // con olas suaves; Blanco, quieta. Quick Look (iPhone) no lleva shader: la ve quieta.
+  const AGUA = { uOlas: { value: 0 } };
+  const OLAS_ESTILO = { texturas: 1, madera: 0.6, blanco: 0 };
+  function aguaViva(m) {
+    if (m.userData.vivo) return;
+    m.userData.vivo = true;
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uTiempo = FOLLAJE.uTiempo;
+      sh.uniforms.uRevit = FOLLAJE.uRevit;
+      sh.uniforms.uOlas = AGUA.uOlas;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vAguaP;\nvarying vec3 vAguaX;\nvarying vec3 vAguaY;\nvarying vec3 vAguaZ;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+vAguaP = position;
+vAguaX = normalize((modelViewMatrix * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
+vAguaY = normalize((modelViewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+vAguaZ = normalize((modelViewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+uniform float uTiempo;
+uniform float uOlas;
+uniform float uRevit;
+varying vec3 vAguaP;
+varying vec3 vAguaX;
+varying vec3 vAguaY;
+varying vec3 vAguaZ;
+vec3 olasOL(vec2 p, float t) {          // (dh/dx, dh/dz, h), en metros
+  vec3 r = vec3(0.0);
+  p += 0.35 * vec2(sin(p.y * 0.9 + t * 0.4), sin(p.x * 0.8 - t * 0.35));
+  for (int i = 0; i < 6; i++) {
+    float fi = float(i);
+    float ang = fi * 2.39996 + 0.6;
+    vec2 d = vec2(cos(ang), sin(ang));
+    float k = 6.28318 / (0.3 * pow(1.45, fi));
+    float fase = k * dot(d, p) - sqrt(9.8 * k) * 0.35 * t + fi * 1.7;
+    float nit = clamp(1.6 - fwidth(fase), 0.0, 1.0);
+    float pend = 0.5 / (1.0 + fi * 0.35) * nit;
+    r.xy += d * cos(fase) * pend;
+    r.z += sin(fase) * pend / k;
+  }
+  return r;
+}`)
+        .replace('#include <map_fragment>', `#ifdef USE_MAP
+  { vec2 a = vMapUv + uTiempo * uOlas * vec2(0.013, 0.008);
+    vec2 b = vMapUv * 1.13 + vec2(0.37, 0.61) - uTiempo * uOlas * vec2(0.009, -0.011);
+    diffuseColor *= max(texture2D(map, a), texture2D(map, b)); }
+#endif
+{ vec3 c = diffuseColor.rgb;
+  float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  diffuseColor.rgb = mix(c, max(vec3(g) + (c - vec3(g)) * ${REVIT.sat.toFixed(3)}, 0.0) * ${REVIT.luz.toFixed(3)}, uRevit); }`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+if (uOlas > 0.0) {
+  vec3 o = olasOL(vAguaP.xz, uTiempo);
+  float arriba = abs(dot(normal, vAguaY));          // las caras de lado, casi sin olas
+  normal = normalize(normal - uOlas * arriba * (o.x * vAguaX + o.y * vAguaZ));
+  diffuseColor.rgb *= 1.0 + 0.12 * uOlas * arriba * clamp(o.z / 0.03, -1.0, 1.0);   // las crestas, más claras
+}`);
+    };
+    m.customProgramCacheKey = () => 'aguaOL';
     m.needsUpdate = true;
   }
   function cespedVivo(m) {
@@ -852,7 +922,7 @@ gl_Position = projectionMatrix * mvPosition;`);
     const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
     const escena = sim && visor[sim];
     if (!escena || !escena.traverse) return;
-    let follaje = false;
+    let follaje = false, agua = false;
     escena.traverse(o => {
       if (o.isLineSegments || o.isLine) {
         o.visible = si;
@@ -875,6 +945,8 @@ gl_Position = projectionMatrix * mvPosition;`);
           follaje = true;
         }
         if (FOLLAJE_NUEVO) mats.filter(m => m.name && m.name.startsWith('verde')).forEach(cespedVivo);
+        const aguas = mats.filter(m => m.name && m.name.startsWith('agua'));
+        if (aguas.length) { aguas.forEach(aguaViva); agua = true; }
         mats.filter(m => m.name && PAPELES_REVIT.includes(m.name.split(';')[0])).forEach(revitVivo);
         // las caras, un pelo hacia atrás: la arista se ve entera y no a trozos
         for (const m of mats) {
@@ -913,7 +985,8 @@ gl_Position = projectionMatrix * mvPosition;`);
     FOLLAJE.uDentro.value = estilo === 'blanco' ? 0 : 1;
     FOLLAJE.uReaviva.value = estilo === 'texturas' && FOLLAJE_NUEVO ? 1 : 0;
     FOLLAJE.uRevit.value = estilo === 'texturas' ? 1 : 0;
-    if (follaje) soplar(escena);
+    AGUA.uOlas.value = OLAS_ESTILO[estilo] || 0;
+    if (follaje || agua) soplar(escena);
     if (escena.queueRender) escena.queueRender();
   }
 
@@ -954,7 +1027,8 @@ gl_Position = projectionMatrix * mvPosition;`);
       c = c.slice(0, 3).map(x => x + (g - x) * d).concat([alfaCopa != null ? alfaCopa : alfaVidrio != null ? alfaVidrio : c[3]]);
       if (FOLLAJE_NUEVO && (recortada || papel === 'verde')) c = sobrio(c);
       pbr.setBaseColorFactor(c);
-      pbr.setRoughnessFactor(o.rugosidad);
+      // el agua, más lisa: sus olas se leen por el reflejo del cielo
+      pbr.setRoughnessFactor(papel === 'agua' ? Math.min(o.rugosidad, 0.06) : o.rugosidad);
       pbr.setMetallicFactor(o.metal);
       if (tex) tex.setTexture(o.textura);
       if (alfaCopa != null || recortada) ponerAlfa(alfaCopa);
@@ -979,9 +1053,9 @@ gl_Position = projectionMatrix * mvPosition;`);
       const a = alfaCopa != null ? alfaCopa : alfaVidrio != null ? alfaVidrio : aTabla;
       ponerAlfa(a);
       pbr.setBaseColorFactor(deSRGB(c, a));
-      pbr.setRoughnessFactor(papel === 'vidrio' ? 0.2 : papel === 'copa' ? 1 : 0.8);
+      pbr.setRoughnessFactor(papel === 'vidrio' ? 0.2 : papel === 'agua' ? 0.08 : papel === 'copa' ? 1 : 0.8);
       pbr.setMetallicFactor(0);
-      if (tex) tex.setTexture(recortada ? o.textura : papel !== 'vidrio' ? VETA : null);
+      if (tex) tex.setTexture(recortada ? o.textura : papel !== 'vidrio' && papel !== 'agua' ? VETA : null);
       if (tex && !recortada && tex.texture && tex.texture.sampler) {
         tex.texture.sampler.setWrapS(10497); tex.texture.sampler.setWrapT(10497);   // REPEAT
       }
