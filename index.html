@@ -63,6 +63,7 @@
     bottom: calc(env(safe-area-inset-bottom) + 28px); }
   .estilos.en-ar button { height: 38px; padding: 0 16px; font-size: 15px; }
   body.portada .cabecera, body.portada .pie, body.portada .estilos { display: none !important; }
+  body.portada model-viewer { --progress-bar-height: 0px; }   /* salía como una raya verde arriba de la tarjeta */
   .error { position: fixed; inset: 0; display: none; place-items: center; padding: 30px;
     text-align: center; color: var(--tenue); }
 </style>
@@ -312,6 +313,7 @@
       if (m.isLoaded === false) continue;
       const pbr = m.pbrMetallicRoughness;
       ORIGINAL.set(m, { color: pbr.baseColorFactor.slice(), rugosidad: pbr.roughnessFactor,
+                        metal: pbr.metallicFactor || 0,       // (las placas solares: 0,2)
                         textura: pbr.baseColorTexture ? pbr.baseColorTexture.texture : null,
                         alfa: m.getAlphaMode ? m.getAlphaMode() : null,
                         emisivo: emisivoDe(m) });
@@ -497,10 +499,21 @@
   // hasta un contraste (veta: su desviación, en 0-255) y solo se oscurece lo muy claro.
   // Probado con las de 654 Adequa y 661 Brunete (16/11/2026).
   const REALCE = { contraste: 2.4, color: 2.8, croma: 26, veta: 16, claro: 190, luz: 0.86 };
+  // El tinte: Revit puede teñir el dibujo de un material (su «Tinte»), que no se
+  // exporta; el GLB trae el color del material en Revit (extras.revit) y, si difiere
+  // de la media del dibujo en el TONO (no solo en lo claro), se tiñe con él. En la
+  // biblioteca del estudio coinciden en todos menos en los tinteados: en 628 Iberia
+  // «Tierra_Deporte_ Rojo», la imagen de la tierra clara que Revit enseña beige.
+  // Un tinte multiplica, así que el color queda por debajo de la media en los tres
+  // canales: si alguno la pasa, no es un tinte (el hormigón de 650 y 661, ×2,4 más
+  // claro que su dibujo, el agua de 661 o el aluminio de sus pérgolas) y no se toca.
+  const TINTE_MINIMO = 0.04;          // diferencia entre canales del cociente color / media
+  const TINTE_MAXIMO = 1.02;          // ningún canal por encima de su media
   const REALZADAS = new Map();
-  function realzada(tex) {
+  function realzada(tex, revit) {
     if (tex.userData && tex.userData.realzada) return tex;
-    if (REALZADAS.has(tex.uuid)) return REALZADAS.get(tex.uuid);
+    const clave = tex.uuid + (revit ? '·' + revit.join(',') : '');
+    if (REALZADAS.has(clave)) return REALZADAS.get(clave);
     const img = tex.image;
     if (!img || !img.width) return tex;
     let t = tex;
@@ -512,6 +525,13 @@
       const im = g.getImageData(0, 0, cv.width, cv.height), d = im.data, n = d.length / 4, m = [0, 0, 0];
       for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) m[k] += d[i + k];
       for (let k = 0; k < 3; k++) m[k] /= n;
+      if (revit && revit.length === 3) {
+        const r = revit.map((x, k) => x * 255 / Math.max(m[k], 1));
+        if (Math.max(...r) - Math.min(...r) > TINTE_MINIMO && Math.max(...r) <= TINTE_MAXIMO) {
+          for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) d[i + k] = Math.min(255, d[i + k] * r[k]);
+          for (let k = 0; k < 3; k++) m[k] = Math.min(255, m[k] * r[k]);
+        }
+      }
       const y = 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2];
       let v = 0;
       for (let i = 0; i < d.length; i += 4) {
@@ -531,7 +551,7 @@
       t.userData = { realzada: true };
       t.needsUpdate = true;
     } catch (e) { t = tex; }
-    REALZADAS.set(tex.uuid, t);
+    REALZADAS.set(clave, t);
     return t;
   }
   function follajeVivo(m) {
@@ -798,7 +818,7 @@ gl_Position = projectionMatrix * mvPosition;`);
           // dibujo o con la veta de la maqueta, que pone vestir)
           if (estilo === 'texturas' && m.map && !(m.map.userData && m.map.userData.realzada)
               && m.name && PAPELES_REVIT.includes(m.name.split(';')[0])) {
-            const t = realzada(m.map);
+            const t = realzada(m.map, m.userData && m.userData.revit);
             if (t !== m.map) { m.map = t; m.needsUpdate = true; }
           }
           // La sombra de dentro del follaje (su color de vértice), en Madera no: la
@@ -857,6 +877,7 @@ gl_Position = projectionMatrix * mvPosition;`);
       if (FOLLAJE_NUEVO && (recortada || papel === 'verde')) c = sobrio(c);
       pbr.setBaseColorFactor(c);
       pbr.setRoughnessFactor(o.rugosidad);
+      pbr.setMetallicFactor(o.metal);
       if (tex) tex.setTexture(o.textura);
       if (alfaCopa != null || recortada) ponerAlfa(alfaCopa);
       else if (alfaVidrio != null && m.setAlphaMode) m.setAlphaMode(alfaVidrio < 1 ? 'BLEND' : 'OPAQUE');
@@ -871,6 +892,7 @@ gl_Position = projectionMatrix * mvPosition;`);
                                     : c.slice(0, 3).map(x => x * BLANCO_LUZ.sol).concat([a == null ? 1 : a]));
       if (!vidrio) emisivo = c.slice(0, 3).map(x => x * BLANCO_LUZ.propia);
       pbr.setRoughnessFactor(vidrio ? 0.2 : 1);
+      pbr.setMetallicFactor(0);
       if (tex) tex.setTexture(recortada ? o.textura : null);
     } else {
       const [c0, aTabla] = MADERA[papel] || MADERA.edificio;
@@ -880,6 +902,7 @@ gl_Position = projectionMatrix * mvPosition;`);
       ponerAlfa(a);
       pbr.setBaseColorFactor(deSRGB(c, a));
       pbr.setRoughnessFactor(papel === 'vidrio' ? 0.2 : papel === 'copa' ? 1 : 0.8);
+      pbr.setMetallicFactor(0);
       if (tex) tex.setTexture(recortada ? o.textura : papel !== 'vidrio' ? VETA : null);
       if (tex && !recortada && tex.texture && tex.texture.sampler) {
         tex.texture.sampler.setWrapS(10497); tex.texture.sampler.setWrapT(10497);   // REPEAT
