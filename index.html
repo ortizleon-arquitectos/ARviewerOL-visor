@@ -451,6 +451,7 @@
   // Blanco es la «Línea oculta» de Revit: plano, cada cara de su color. Casi todo es
   // luz propia (emisiva) y el sol solo la modela un pelo, para que se lea el volumen.
   const BLANCO_LUZ = { propia: 0.86, sol: 0.16 };
+  const AGUA_BLANCO = { alfa: 0.5, propia: 0.35, sol: 0.6 };
 
   // ── El viento y la luz pintada del follaje ──────────────────────────────
   // Las copas y las matas del césped (GLB desde el 16/11/2026) traen en su segunda
@@ -509,7 +510,9 @@
   // píxel (fwidth): si no, el agua centelleaba. Texturas, con todo; Madera, metacrilato
   // con olas suaves; Blanco, quieta. Quick Look (iPhone) no lleva shader: la ve quieta.
   const AGUA = { uOlas: { value: 0 } };
-  const OLAS_ESTILO = { texturas: 1, madera: 0.6, blanco: 0 };
+  // (más sutil desde el 17/11/2026: olas de 0,3 de pendiente y a 0,2 de su velocidad
+  // natural; a 0,5 y 0,35 la piscina de 604 se movía demasiado)
+  const OLAS_ESTILO = { texturas: 1, madera: 0.7, blanco: 0.7 };
   function aguaViva(m) {
     if (m.userData.vivo) return;
     m.userData.vivo = true;
@@ -535,23 +538,23 @@ varying vec3 vAguaY;
 varying vec3 vAguaZ;
 vec3 olasOL(vec2 p, float t) {          // (dh/dx, dh/dz, h), en metros
   vec3 r = vec3(0.0);
-  p += 0.35 * vec2(sin(p.y * 0.9 + t * 0.4), sin(p.x * 0.8 - t * 0.35));
+  p += 0.35 * vec2(sin(p.y * 0.9 + t * 0.25), sin(p.x * 0.8 - t * 0.2));
   for (int i = 0; i < 6; i++) {
     float fi = float(i);
     float ang = fi * 2.39996 + 0.6;
     vec2 d = vec2(cos(ang), sin(ang));
     float k = 6.28318 / (0.3 * pow(1.45, fi));
-    float fase = k * dot(d, p) - sqrt(9.8 * k) * 0.35 * t + fi * 1.7;
+    float fase = k * dot(d, p) - sqrt(9.8 * k) * 0.2 * t + fi * 1.7;
     float nit = clamp(1.6 - fwidth(fase), 0.0, 1.0);
-    float pend = 0.5 / (1.0 + fi * 0.35) * nit;
+    float pend = 0.3 / (1.0 + fi * 0.35) * nit;
     r.xy += d * cos(fase) * pend;
     r.z += sin(fase) * pend / k;
   }
   return r;
 }`)
         .replace('#include <map_fragment>', `#ifdef USE_MAP
-  { vec2 a = vMapUv + uTiempo * uOlas * vec2(0.013, 0.008);
-    vec2 b = vMapUv * 1.13 + vec2(0.37, 0.61) - uTiempo * uOlas * vec2(0.009, -0.011);
+  { vec2 a = vMapUv + uTiempo * uOlas * vec2(0.006, 0.004);
+    vec2 b = vMapUv * 1.13 + vec2(0.37, 0.61) - uTiempo * uOlas * vec2(0.0045, -0.0055);
     diffuseColor *= max(texture2D(map, a), texture2D(map, b)); }
 #endif
 { vec3 c = diffuseColor.rgb;
@@ -562,7 +565,7 @@ if (uOlas > 0.0) {
   vec3 o = olasOL(vAguaP.xz, uTiempo);
   float arriba = abs(dot(normal, vAguaY));          // las caras de lado, casi sin olas
   normal = normalize(normal - uOlas * arriba * (o.x * vAguaX + o.y * vAguaZ));
-  diffuseColor.rgb *= 1.0 + 0.12 * uOlas * arriba * clamp(o.z / 0.03, -1.0, 1.0);   // las crestas, más claras
+  diffuseColor.rgb *= 1.0 + 0.06 * uOlas * arriba * clamp(o.z / 0.02, -1.0, 1.0);   // las crestas, más claras
 }`);
     };
     m.customProgramCacheKey = () => 'aguaOL';
@@ -1037,13 +1040,16 @@ gl_Position = projectionMatrix * mvPosition;`);
     } else if (estilo === 'blanco') {
       const [cTabla, aTabla] = BLANCO[papel] || BLANCO.edificio;
       const vidrio = papel === 'vidrio';
+      // El agua, transparente y lisa como en los otros modos (17/11/2026): con menos luz
+      // propia y el sol entero, para que sus olas se lean en el reflejo
+      const agua = papel === 'agua';
       const c = deSRGB(vidrio ? cTabla : colorDe(hex, papel));
-      const a = alfaCopa != null ? alfaCopa : alfaVidrio != null ? alfaVidrio : aTabla;
+      const a = alfaCopa != null ? alfaCopa : alfaVidrio != null ? alfaVidrio : agua ? AGUA_BLANCO.alfa : aTabla;
       ponerAlfa(a);
       pbr.setBaseColorFactor(vidrio ? c.slice(0, 3).concat([a])
-                                    : c.slice(0, 3).map(x => x * BLANCO_LUZ.sol).concat([a == null ? 1 : a]));
-      if (!vidrio) emisivo = c.slice(0, 3).map(x => x * BLANCO_LUZ.propia);
-      pbr.setRoughnessFactor(vidrio ? 0.2 : 1);
+                                    : c.slice(0, 3).map(x => x * (agua ? AGUA_BLANCO.sol : BLANCO_LUZ.sol)).concat([a == null ? 1 : a]));
+      if (!vidrio) emisivo = c.slice(0, 3).map(x => x * (agua ? AGUA_BLANCO.propia : BLANCO_LUZ.propia));
+      pbr.setRoughnessFactor(vidrio ? 0.2 : agua ? 0.08 : 1);
       pbr.setMetallicFactor(0);
       if (tex) tex.setTexture(recortada ? o.textura : null);
     } else {
