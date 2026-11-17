@@ -78,7 +78,7 @@
 <model-viewer id="visor" alt="Modelo 3D del proyecto"
   ar ar-modes="webxr scene-viewer quick-look" ar-placement="floor" ar-scale="auto"
   camera-controls touch-action="pan-y" interaction-prompt="auto"
-  camera-orbit="-35deg 65deg auto" shadow-intensity="1" shadow-softness="0.8"
+  camera-orbit="-35deg 65deg auto" shadow-intensity="1" shadow-softness="0.8" reveal="manual" loading="eager"
   environment-image="luz.hdr" exposure="1">
   <button slot="ar-button" class="boton-ar" style="display:none" aria-hidden="true"></button>
 </model-viewer>
@@ -207,9 +207,16 @@
   }
   // «color» es el nombre viejo de «texturas» (lo publicado antes del 05/11/2026)
   const deVerdad = e => e === 'color' ? 'texturas' : e;
-  visor.addEventListener('load', () => prepararEstilos(
-    ['blanco', 'texturas', 'madera'].includes(deVerdad(pedido)) ? deVerdad(pedido) : (deVerdad(p.estilo) || 'texturas')),
-    { once: true });
+  // El modelo no se enseña hasta que tiene su estilo (reveal="manual"): antes salía un
+  // momento con los colores en bruto del GLB, más oscuros, y luego cambiaba (17/11/2026).
+  // Con tope: si algo de los estilos se atasca, se enseña igual a los 8 s.
+  const ensenar = () => { try { visor.dismissPoster(); } catch (e) {} };
+  visor.addEventListener('load', () => {
+    setTimeout(ensenar, 8000);
+    prepararEstilos(['blanco', 'texturas', 'madera'].includes(deVerdad(pedido)) ? deVerdad(pedido) : (deVerdad(p.estilo) || 'texturas'))
+      .catch(e => console.error('estilos', e))
+      .finally(() => requestAnimationFrame(ensenar));
+  }, { once: true });
   ponerVista(p.camara);
   visor.src = p.src;
 
@@ -267,24 +274,41 @@
   // Y la del vidrio (null: como en cada modo; en Texturas, la de su material de Revit)
   const ALFA_VIDRIO = typeof p.alfa_vidrio === 'number' && p.alfa_vidrio >= 0.1 && p.alfa_vidrio <= 1 ? p.alfa_vidrio : null;
 
+  // La veta de Madera: una vuelta son 6 cm de maqueta (VETA_MAQUETA_M de ar_glb.py).
+  // Como el roble cortado al hilo de las maquetas de taller: fibra fina y densa a
+  // trozos (rayitas cortas, unas más claras y otras más oscuras), hebras algo más
+  // largas y unas manchas anchas y suaves de tono. Nada de líneas seguidas: hasta el
+  // 17/11/2026 era una suma de senos, y sus líneas, todas iguales y a la misma
+  // distancia, se leían como filas por encima de suelos y cubiertas (628 Iberia).
+  // Todo es periódico en N: la textura casa consigo misma al repetirse.
   function lienzoDeVeta() {
     const N = 512, cv = document.createElement('canvas');
     cv.width = cv.height = N;
     const g = cv.getContext('2d'), img = g.createImageData(N, N), d = img.data;
-    const ruido = new Float32Array(N);
     let semilla = 7;
-    for (let i = 0; i < N; i++) { semilla = (semilla * 16807) % 2147483647; ruido[i] = semilla / 2147483647; }
+    const azar = () => (semilla = (semilla * 16807) % 2147483647) / 2147483647;
+    // Ruido de valor sobre una rejilla de gx × gy casillas que da la vuelta en N:
+    // pocas a lo largo de la fibra (x) y muchas a lo ancho (y), y sale a rayas cortas
+    const rejilla = (gx, gy) => {
+      const r = new Float32Array(gx * gy).map(azar);
+      return (x, y) => {
+        const u = x * gx / N, v = y * gy / N, i0 = Math.floor(u), j0 = Math.floor(v);
+        let fu = u - i0, fv = v - j0;
+        fu = fu * fu * (3 - 2 * fu); fv = fv * fv * (3 - 2 * fv);
+        const i = ((i0 % gx) + gx) % gx, i1 = (i + 1) % gx, j = ((j0 % gy) + gy) % gy, j1 = (j + 1) % gy;
+        const a = r[j * gx + i], b = r[j * gx + i1], c = r[j1 * gx + i], e = r[j1 * gx + i1];
+        return a + (b - a) * fu + (c - a) * fv + (a - b - c + e) * fu * fv;
+      };
+    };
+    const fibra = rejilla(14, 190), hebra = rejilla(5, 64), mancha = rejilla(2, 7), poro = rejilla(16, 230);
     const T = 2 * Math.PI / N;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      // Todo periódico en 512: la textura casa consigo misma al repetirse.
-      // Tilo/abedul: fibras finas y casi rectas, muy poco contraste, y alguna veta
-      // algo más oscura de tarde en tarde (como en las maquetas de referencia)
-      const t = y + 1.4 * Math.sin(T * 2 * x) + 0.6 * Math.sin(T * 7 * x + 1.3);
-      const fibra = 0.5 + 0.5 * Math.sin(T * 61 * t + 3 * ruido[x]);
-      const veta = Math.pow(0.5 + 0.5 * Math.sin(T * 9 * t + 0.7), 14);
-      const fila = ruido[((Math.round(t) % N) + N) % N];
-      const v = 1 - 0.018 * fibra - 0.07 * veta - 0.025 * fila;
-      const k = (y * N + x) * 4, c = Math.round(255 * v);
+      // la fibra no es del todo recta: se ondula despacio
+      const t = y + 3 * Math.sin(T * x + 0.4) + 1.5 * Math.sin(T * 3 * x + 2.1);
+      const p = Math.max(0, poro(x, t) - 0.78) * 4.5;          // rayitas oscuras sueltas
+      const v = 0.985 - 0.05 * (fibra(x, t) - 0.5) - 0.06 * (hebra(x, t) - 0.5)
+                      - 0.07 * (mancha(x, t) - 0.5) - 0.06 * p;
+      const k = (y * N + x) * 4, c = Math.round(255 * Math.min(1, v));
       d[k] = d[k + 1] = d[k + 2] = c; d[k + 3] = 255;
     }
     g.putImageData(img, 0, 0);
@@ -351,6 +375,10 @@
       if (!o) continue;                         // un material que no se ha podido cargar
       try { vestir(m, o, estilo); } catch (e) { console.error('estilo', m.name, e); }
     }
+    // La veta es una sola textura para todos los materiales, y model-viewer le pone la
+    // escala del último que la recibe (en los que traen textura de Revit, la que la
+    // lleva a su tamaño real): la veta salía a otro tamaño según el modelo. A una vuelta.
+    if (estilo === 'madera' && VETA && VETA.sampler) VETA.sampler.setScale({ u: 1, v: 1 });
     escenaDelEstilo(estilo);
     // Las aristas a resolución entera: model-viewer baja la resolución cuando el modelo
     // pesa (hasta la mitad) y una línea de un píxel salía gruesa y gris. Solo en Blanco,
@@ -755,13 +783,27 @@ gl_Position = projectionMatrix * mvPosition;`);
       }
     };
   }
+  // En la AR se ve el modelo desde el mismo lado que en la página al pulsar «Ver en tu
+  // espacio» (la vista con la que se abre, si no se ha girado). En Android (WebXR)
+  // model-viewer ya lo hace: gira el modelo lo que esté girada la cámara. Quick Look
+  // (iPhone) lo posa siempre de frente (+Z): se gira el modelo -θ antes de hacer su
+  // fichero y se deshace después. La altura y la distancia, en la AR, las pone quien mira.
+  function giroParaQuickLook() {
+    const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
+    const escena = sim && visor[sim];
+    if (!escena || !escena.models || !escena.models.length) return () => {};
+    const theta = visor.getCameraOrbit().theta;
+    const antes = escena.models.map(m => m.quaternion.clone());
+    escena.models.forEach(m => { m.rotateY(-theta); m.updateMatrixWorld(true); });
+    return () => escena.models.forEach((m, i) => { m.quaternion.copy(antes[i]); m.updateMatrixWorld(true); });
+  }
   // model-viewer la llama con this.prepareUSDZ() al pulsar «ver en tu espacio» en iPhone
   function prepararQuickLook() {
     if (visor.prepareUSDZ === undefined || visor.hasOwnProperty('prepareUSDZ')) return;
     const original = visor.prepareUSDZ.bind(visor);
     visor.prepareUSDZ = async () => {
-      const deshacer = paraQuickLook();
-      try { return await original(); } finally { deshacer(); }
+      const deshacer = paraQuickLook(), desgirar = giroParaQuickLook();
+      try { return await original(); } finally { desgirar(); deshacer(); }
     };
   }
 
