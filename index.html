@@ -49,6 +49,9 @@
     display: inline-flex; align-items: center; background: rgba(255,255,255,.88); color: var(--tinta);
     font: 600 12px var(--serie); text-decoration: none; cursor: pointer;
     box-shadow: 0 2px 10px rgba(38,38,38,.12); }
+  .nota-arv { max-width: 46ch; font-size: 12.5px; line-height: 1.45; color: var(--tinta); text-align: center;
+    background: rgba(255,255,255,.92); padding: 10px 14px; border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(38,38,38,.12); }
   /* El conmutador de estilo (Blanco, Texturas, Madera), abajo y al centro, encima del
      botón de AR: arriba a la derecha no cabía en un móvil y se montaba en el nombre */
   .estilos { display: none; padding: 3px; gap: 2px; border-radius: 99px;
@@ -97,7 +100,9 @@
   <div class="enlace-aqui" id="enlace-aqui" hidden>
     <button type="button" id="copiar-enlace">Copiar enlace</button>
     <a id="abrir-enlace" target="_blank" rel="noopener">Abrir el enlace</a>
+    <button type="button" id="abrir-arv" title="Abrir este proyecto en ARviewerOL, si es de este equipo">Abrir en ARviewerOL</button>
   </div>
+  <div class="nota-arv" id="nota-arv" hidden></div>
   <div class="sin-ar" id="sin-ar">Gira el modelo con el dedo. Para verlo en tu espacio, abre esta
     página en un móvil o una tableta.</div>
 </div>
@@ -125,7 +130,38 @@
       setTimeout(() => { b.textContent = 'Copiar enlace'; }, 1600);
     });
     document.getElementById('enlace-aqui').hidden = false;
+    document.getElementById('abrir-arv').addEventListener('click', abrirEnARviewerOL);
   };
+  // «Abrir en ARviewerOL» (la copia de Maqueta 3D): el QR de cada maqueta es de quien
+  // la hizo y su proyecto vive en su equipo. Se le pregunta al ARviewerOL de este
+  // equipo: si el proyecto es de aquí, lo enseña; si no, se dice de quién es y cómo
+  // hacer otra versión (con el mismo nombre, al subirla sustituye a esta).
+  const ARVIEWEROL = 'http://127.0.0.1:7410';
+  const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  async function abrirEnARviewerOL() {
+    const nota = document.getElementById('nota-arv');
+    const decir = html => { nota.innerHTML = html; nota.hidden = false; };
+    const maqueta = (location.pathname.match(/\/muestras\/([^/]+)\//) || [])[1] || null;
+    let ficha = {};
+    try { ficha = await (await fetch('muestra.json', { cache: 'no-cache' })).json(); } catch (e) {}
+    const quien = ficha.porNombre || ficha.por || '';
+    const otraVersion = 'Para hacer otra versión, crea la tuya en ARviewerOL desde Revit con el mismo nombre' +
+      (p.nombre ? ' («' + esc(p.nombre) + '»)' : '') + ': al subirla a Maqueta 3D sustituirá a esta, ' +
+      'y el QR de la de ahora seguirá funcionando.';
+    let r = null;
+    try {
+      // text/plain: una petición simple, sin la pregunta previa del navegador
+      const resp = await fetch(ARVIEWEROL + '/api/plataforma/abrir', { method: 'POST',
+        headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ maqueta, qr: p.qr || null }) });
+      if (resp.ok) r = await resp.json();
+    } catch (e) {}
+    if (r && r.ok) decir('Abierta en ARviewerOL: <b>' + esc(r.proyecto.nombre) + '</b>.' +
+                         (r.ventana ? '' : ' Su ventana está en la barra de tareas.'));
+    else if (r) decir('Esta maqueta y su QR son de ' + (quien ? '<b>' + esc(quien) + '</b>' : 'quien la subió') +
+                      ': su proyecto está en su equipo, y desde ahí se actualiza. ' + otraVersion);
+    else decir('ARviewerOL no está abierto en este equipo. Ábrelo y vuelve a pulsar.' +
+               (quien ? ' Esta maqueta la subió <b>' + esc(quien) + '</b>: solo se actualiza desde su equipo.' : ''));
+  }
   const deB64url = t => Uint8Array.from(atob(t.replace(/-/g, '+').replace(/_/g, '/') +
     '='.repeat((4 - t.length % 4) % 4)), c => c.charCodeAt(0));
 
