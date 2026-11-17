@@ -43,6 +43,12 @@
   .qr-aqui { display: none; width: 128px; padding: 6px; background: #fff; border-radius: 10px;
     box-shadow: 0 4px 16px rgba(38,38,38,.12); }
   .qr-aqui svg { display: block; width: 100%; height: auto; }
+  /* En la copia de Maqueta 3D, el enlace del QR debajo: para pegarlo en un correo */
+  .enlace-aqui { display: flex; gap: 6px; }
+  .enlace-aqui button, .enlace-aqui a { height: 28px; padding: 0 12px; border: 0; border-radius: 99px;
+    display: inline-flex; align-items: center; background: rgba(255,255,255,.88); color: var(--tinta);
+    font: 600 12px var(--serie); text-decoration: none; cursor: pointer;
+    box-shadow: 0 2px 10px rgba(38,38,38,.12); }
   /* El conmutador de estilo (Blanco, Texturas, Madera), abajo y al centro, encima del
      botón de AR: arriba a la derecha no cabía en un móvil y se montaba en el nombre */
   .estilos { display: none; padding: 3px; gap: 2px; border-radius: 99px;
@@ -87,6 +93,10 @@
       <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg>
     Ver en tu espacio</button>
   <div class="qr-aqui" id="qr-aqui"></div>
+  <div class="enlace-aqui" id="enlace-aqui" hidden>
+    <button type="button" id="copiar-enlace">Copiar enlace</button>
+    <a id="abrir-enlace" target="_blank" rel="noopener">Abrir el enlace</a>
+  </div>
   <div class="sin-ar" id="sin-ar">Gira el modelo con el dedo. Para verlo en tu espacio, abre esta
     página en un móvil o una tableta.</div>
 </div>
@@ -103,6 +113,17 @@
     const e = document.getElementById('error');
     e.textContent = texto; e.style.display = 'grid';
     document.querySelector('.pie').style.display = 'none';
+  };
+  // El enlace del QR, para copiarlo o abrirlo (la copia de Maqueta 3D)
+  const mostrarEnlace = url => {
+    const b = document.getElementById('copiar-enlace');
+    document.getElementById('abrir-enlace').href = url;
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(url); b.textContent = 'Copiado'; }
+      catch (e) { b.textContent = 'No se ha podido'; }
+      setTimeout(() => { b.textContent = 'Copiar enlace'; }, 1600);
+    });
+    document.getElementById('enlace-aqui').hidden = false;
   };
   const deB64url = t => Uint8Array.from(atob(t.replace(/-/g, '+').replace(/_/g, '/') +
     '='.repeat((4 - t.length % 4) % 4)), c => c.charCodeAt(0));
@@ -174,6 +195,7 @@
         caja.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
         caja.style.display = 'block';
         document.getElementById('sin-ar').textContent = 'Gira el modelo con el ratón. Para verlo en tu espacio, escanea el código con el móvil.';
+        if (destino === p.qr) mostrarEnlace(p.qr);
       }
     }
   });
@@ -187,7 +209,33 @@
   visor.addEventListener('load', () => prepararEstilos(
     ['blanco', 'texturas', 'madera'].includes(deVerdad(pedido)) ? deVerdad(pedido) : (deVerdad(p.estilo) || 'texturas')),
     { once: true });
+  ponerVista(p.camara);
   visor.src = p.src;
+
+  // ── La vista con la que se abre ─────────────────────────────────────────
+  // La elegida en ARviewerOL girando la previa («Vista al abrir»). Va en metros
+  // reales (vale con cualquier escala) y el campo de visión es el «encuadrado» de
+  // model-viewer, que él mismo abre en las pantallas estrechas (un móvil en vertical).
+  // Se pone antes de cargar: el modelo aparece ya desde ahí, sin salto.
+  function ponerVista(c) {
+    if (!c || !c.orbita || !c.objetivo || !c.fov) return;
+    const e = p.escala || 1, m = x => (x / e).toFixed(5) + 'm';
+    visor.cameraOrbit = c.orbita[0] + 'deg ' + c.orbita[1] + 'deg ' + m(c.orbita[2]);
+    visor.cameraTarget = c.objetivo.map(m).join(' ');
+    visor.fieldOfView = c.fov + 'deg';
+  }
+  // Para la ventana de ARviewerOL: la vista en la que está ahora la previa
+  window.vistaActual = () => {
+    if (!visor.loaded) return null;
+    const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
+    const escena = sim && visor[sim];
+    const o = visor.getCameraOrbit(), t = visor.getCameraTarget(), e = p.escala || 1;
+    const rad = Math.PI / 180;
+    // el campo de visión de la cámara, deshecho el ensanche de pantalla estrecha
+    const k = escena && escena.idealAspect && escena.aspect ? Math.max(1, escena.idealAspect / escena.aspect) : 1;
+    const fov = 2 * Math.atan(Math.tan(visor.getFieldOfView() * rad / 2) / k) / rad;
+    return { orbita: [o.theta / rad, o.phi / rad, o.radius * e], objetivo: [t.x * e, t.y * e, t.z * e], fov };
+  };
 
   // ── Los estilos ─────────────────────────────────────────────────────────
   // Los materiales del GLB se llaman por su papel (edificio, entorno, terreno,
