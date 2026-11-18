@@ -849,9 +849,13 @@ gl_Position = projectionMatrix * mvPosition;`);
   const DESIGUAL = 2.5;
   // El dibujo en gris, con su media en un gris claro (215 en sRGB): el factor de color
   // que queda va por debajo de 1 y Quick Look no tiene nada que exagerar
+  // alfa: la transparencia del material, que va dentro del dibujo. model-viewer escribe
+  // la opacidad de un material con dibujo como la del dibujo («opacity.connect» al alfa
+  // de la textura, con escala 1): con un JPG, el agua de 604 salía opaca en el iPhone.
   const GRISES = new Map();
-  function enGris(tex) {
-    if (GRISES.has(tex)) return GRISES.get(tex);
+  function enGris(tex, alfa = 1) {
+    const clave = tex.uuid + ':' + alfa;
+    if (GRISES.has(clave)) return GRISES.get(clave);
     const img = tex.image;
     let t = tex;
     try {
@@ -866,6 +870,7 @@ gl_Position = projectionMatrix * mvPosition;`);
       for (let i = 0; i < d.length; i += 4) {
         const l = Math.min(255, (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * k);
         d[i] = d[i + 1] = d[i + 2] = l;
+        d[i + 3] = Math.round(d[i + 3] * alfa);
       }
       g.putImageData(im, 0, 0);
       t = tex.clone();
@@ -873,7 +878,7 @@ gl_Position = projectionMatrix * mvPosition;`);
       t.userData = { gris: true };
       t.needsUpdate = true;
     } catch (e) { t = tex; }
-    GRISES.set(tex, t);
+    GRISES.set(clave, t);
     return t;
   }
   // El color (factor lineal del material) con que se ve aquí, a pleno sol
@@ -918,12 +923,24 @@ gl_Position = projectionMatrix * mvPosition;`);
         // Un dibujo de color muy vivo pide un factor muy distinto en cada canal: el de
         // la piscina de 604 (cáusticas cian, con un 2 % de rojo) pedía el rojo ×8, y Quick
         // Look lo aplica sobre el dibujo en sRGB: el agua salía rosa (18/11/2026). Se lleva
-        // el dibujo en gris, y el color, entero, en el material.
-        if (m.map && Math.max(...v) > DESIGUAL * Math.max(Math.min(...v), 1e-3)) {
+        // el dibujo en gris, y el color, entero, en el material. El agua, siempre (lleva
+        // además su transparencia dentro del dibujo, ver enGris).
+        const desigual = w => Math.max(...w) > DESIGUAL * Math.max(Math.min(...w), 1e-3);
+        const alfa = papel === 'agua' && m.transparent ? m.opacity : 1;
+        if (m.map && (desigual(v) || papel === 'agua')) {
           const t = mediaDe(m.map), visto = v.map((x, i) => x * t[i]);
-          m.map = enGris(m.map);
-          const t2 = mediaDe(m.map);
-          v = visto.map((x, i) => x / t2[i]);
+          const gris = enGris(m.map, alfa);
+          if (gris.userData && gris.userData.gris) {
+            m.map = gris;
+            const t2 = mediaDe(m.map);
+            v = visto.map((x, i) => x / t2[i]);
+          }
+        }
+        // Si el dibujo no se ha podido pasar a gris, el factor no se dispara en un canal
+        // (más vale un agua algo más pálida que rosa)
+        if (m.map && !(m.map.userData && m.map.userData.gris) && desigual(v)) {
+          const tope = DESIGUAL * Math.max(Math.min(...v), 1e-3);
+          v = v.map(x => Math.min(x, tope));
         }
         m.color.setRGB(v[0] * QL_LUZ.sol, v[1] * QL_LUZ.sol, v[2] * QL_LUZ.sol);
         m.emissive.setRGB(v[0] * QL_LUZ.propia, v[1] * QL_LUZ.propia, v[2] * QL_LUZ.propia);
