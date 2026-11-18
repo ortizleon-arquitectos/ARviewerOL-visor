@@ -283,7 +283,8 @@
 
   // ── Los estilos ─────────────────────────────────────────────────────────
   // Los materiales del GLB se llaman por su papel (edificio, entorno, terreno,
-  // vidrio, tronco, copa, y «lineas» las aristas). Lo que trae el GLB es el modo
+  // vidrio, tronco, copa, agua, verde, hierba, mueble, texto, acera, calzada, y
+  // «lineas» las aristas). Lo que trae el GLB es el modo
   // Texturas: el aspecto de render de Revit, con su textura a tamaño real.
   //  · Blanco: como la «Línea oculta» de Revit, todo blanco mate con sus aristas,
   //    el terreno y los árboles en tonos muy pálidos.
@@ -301,11 +302,17 @@
   // Madera: la vegetación (césped, jardineras) en maderas más oscuras, para que se
   // distinga del resto, como en una maqueta de taller; y el agua, metacrilato azulado y
   // transparente (hasta el 17/11/2026, madera oscura: la piscina se leía como un hueco)
+  // Desde el 18/11/2026, el mobiliario y los rótulos en blanco, sin veta (como las
+  // piezas impresas de una maqueta de taller: se distinguen del edificio), y la acera y
+  // la calzada en maderas más oscuras, con la misma veta suave
   const MADERA = {
     edificio: [[240, 229, 207]], entorno: [[228, 212, 184]], terreno: [[220, 201, 168]],
     verde: [[196, 170, 126]], agua: [[176, 204, 210], 0.45], hierba: [[184, 158, 116]],
     copa: [[198, 180, 138]], tronco: [[178, 152, 114]], vidrio: [[234, 238, 236], 0.3],
+    mueble: [[247, 246, 242]], texto: [[247, 246, 242]],
+    acera: [[212, 194, 163]], calzada: [[182, 165, 138]],
   };
+  const SIN_VETA = ['vidrio', 'agua', 'mueble', 'texto'];
   // La transparencia de los árboles: la elige el estudio al publicar (en proyecto.json)
   const ALFA_ARBOLES = typeof p.alfa_arboles === 'number' && p.alfa_arboles >= 0.2 && p.alfa_arboles <= 1 ? p.alfa_arboles : 0.8;
   // Y la del vidrio (null: como en cada modo; en Texturas, la de su material de Revit)
@@ -444,7 +451,7 @@
   // más sosos que en Revit): lo compensa el shader de REVIT, solo en el visor.
   const DESATURA = 0;
   const REVIT = { sat: 1.08, luz: 1.1 };
-  const PAPELES_REVIT = ['edificio', 'entorno', 'terreno', 'agua', 'tronco'];
+  const PAPELES_REVIT = ['edificio', 'entorno', 'terreno', 'agua', 'tronco', 'mueble', 'texto', 'acera', 'calzada'];
   // En Texturas, los árboles de verdad, en los GLB de antes del 06/11/2026 (los traían
   // en el verde pálido de maqueta; los nuevos traen el suyo, sacado de Revit)
   const ARBOLES = { copa: [[112, 140, 86]], tronco: [[118, 98, 78]] };
@@ -838,6 +845,37 @@ gl_Position = projectionMatrix * mvPosition;`);
     MEDIAS.set(tex, m);
     return m;
   }
+  // Cuánto puede variar el factor entre canales antes de llevar el dibujo en gris
+  const DESIGUAL = 2.5;
+  // El dibujo en gris, con su media en un gris claro (215 en sRGB): el factor de color
+  // que queda va por debajo de 1 y Quick Look no tiene nada que exagerar
+  const GRISES = new Map();
+  function enGris(tex) {
+    if (GRISES.has(tex)) return GRISES.get(tex);
+    const img = tex.image;
+    let t = tex;
+    try {
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      const g = cv.getContext('2d');
+      g.drawImage(img, 0, 0);
+      const im = g.getImageData(0, 0, cv.width, cv.height), d = im.data;
+      let s = 0;
+      for (let i = 0; i < d.length; i += 4) s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      const k = 215 / Math.max(s / (d.length / 4), 1);
+      for (let i = 0; i < d.length; i += 4) {
+        const l = Math.min(255, (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * k);
+        d[i] = d[i + 1] = d[i + 2] = l;
+      }
+      g.putImageData(im, 0, 0);
+      t = tex.clone();
+      t.source = new tex.source.constructor(cv);
+      t.userData = { gris: true };
+      t.needsUpdate = true;
+    } catch (e) { t = tex; }
+    GRISES.set(tex, t);
+    return t;
+  }
   // El color (factor lineal del material) con que se ve aquí, a pleno sol
   function comoAqui(m, papel, estilo) {
     let c = [m.color.r, m.color.g, m.color.b];
@@ -876,7 +914,17 @@ gl_Position = projectionMatrix * mvPosition;`);
                        fuerza: m.emissiveIntensity, dibujo: m.map });
         if (hoja) m.map = hojaQL(m.map, alfaQL(ALFA_ARBOLES));
         if (estilo === 'blanco') continue;
-        const v = comoAqui(m, papel, estilo);
+        let v = comoAqui(m, papel, estilo);
+        // Un dibujo de color muy vivo pide un factor muy distinto en cada canal: el de
+        // la piscina de 604 (cáusticas cian, con un 2 % de rojo) pedía el rojo ×8, y Quick
+        // Look lo aplica sobre el dibujo en sRGB: el agua salía rosa (18/11/2026). Se lleva
+        // el dibujo en gris, y el color, entero, en el material.
+        if (m.map && Math.max(...v) > DESIGUAL * Math.max(Math.min(...v), 1e-3)) {
+          const t = mediaDe(m.map), visto = v.map((x, i) => x * t[i]);
+          m.map = enGris(m.map);
+          const t2 = mediaDe(m.map);
+          v = visto.map((x, i) => x / t2[i]);
+        }
         m.color.setRGB(v[0] * QL_LUZ.sol, v[1] * QL_LUZ.sol, v[2] * QL_LUZ.sol);
         m.emissive.setRGB(v[0] * QL_LUZ.propia, v[1] * QL_LUZ.propia, v[2] * QL_LUZ.propia);
         m.emissiveMap = m.map || null;
@@ -969,7 +1017,9 @@ gl_Position = projectionMatrix * mvPosition;`);
           }
           // Las texturas de Revit, realzadas (en Texturas: en los otros modos van sin
           // dibujo o con la veta de la maqueta, que pone vestir)
+          // (el despiece de un azulejo no: ya viene con su color de Revit)
           if (estilo === 'texturas' && m.map && !(m.map.userData && m.map.userData.realzada)
+              && !(m.userData && m.userData.despiece)
               && m.name && PAPELES_REVIT.includes(m.name.split(';')[0])) {
             const t = realzada(m.map, m.userData && m.userData.revit);
             if (t !== m.map) { m.map = t; m.needsUpdate = true; }
@@ -1061,7 +1111,7 @@ gl_Position = projectionMatrix * mvPosition;`);
       pbr.setBaseColorFactor(deSRGB(c, a));
       pbr.setRoughnessFactor(papel === 'vidrio' ? 0.2 : papel === 'agua' ? 0.08 : papel === 'copa' ? 1 : 0.8);
       pbr.setMetallicFactor(0);
-      if (tex) tex.setTexture(recortada ? o.textura : papel !== 'vidrio' && papel !== 'agua' ? VETA : null);
+      if (tex) tex.setTexture(recortada ? o.textura : SIN_VETA.includes(papel) ? null : VETA);
       if (tex && !recortada && tex.texture && tex.texture.sampler) {
         tex.texture.sampler.setWrapS(10497); tex.texture.sampler.setWrapT(10497);   // REPEAT
       }
