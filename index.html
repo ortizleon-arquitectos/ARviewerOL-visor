@@ -243,13 +243,21 @@
   }
   // «color» es el nombre viejo de «texturas» (lo publicado antes del 05/11/2026)
   const deVerdad = e => e === 'color' ? 'texturas' : e;
+  // Los modos que enseña esta maqueta: los elige el estudio en ARviewerOL (20/11/2026);
+  // sin elegir, o en lo publicado antes, los tres. Con uno solo no hay conmutador.
+  const TODOS = ['blanco', 'texturas', 'madera'];
+  const MODOS = Array.isArray(p.estilos) && p.estilos.some(e => TODOS.includes(e))
+    ? TODOS.filter(e => p.estilos.includes(e)) : TODOS;
+  document.querySelectorAll('#estilos button').forEach(b => { b.hidden = !MODOS.includes(b.dataset.estilo); });
+  const abreEn = [deVerdad(pedido), deVerdad(p.estilo)].find(e => MODOS.includes(e))
+    || (MODOS.includes('texturas') ? 'texturas' : MODOS[0]);
   // El modelo no se enseña hasta que tiene su estilo (reveal="manual"): antes salía un
   // momento con los colores en bruto del GLB, más oscuros, y luego cambiaba (17/11/2026).
   // Con tope: si algo de los estilos se atasca, se enseña igual a los 8 s.
   const ensenar = () => { try { visor.dismissPoster(); } catch (e) {} };
   visor.addEventListener('load', () => {
     setTimeout(ensenar, 8000);
-    prepararEstilos(['blanco', 'texturas', 'madera'].includes(deVerdad(pedido)) ? deVerdad(pedido) : (deVerdad(p.estilo) || 'texturas'))
+    prepararEstilos(abreEn)
       .catch(e => console.error('estilos', e))
       .finally(() => requestAnimationFrame(ensenar));
   }, { once: true });
@@ -390,7 +398,7 @@
     FOLLAJE_NUEVO = [...ORIGINAL].some(([m, o]) => m.name.startsWith('hierba') || (m.name.startsWith('copa') && !!o.textura));
     try { VETA = await visor.createTexture(lienzoDeVeta()); } catch (e) { VETA = null; }
     const caja = document.getElementById('estilos');
-    caja.style.display = 'flex';
+    caja.style.display = MODOS.length > 1 ? 'flex' : 'none';
     caja.querySelectorAll('button').forEach(b => b.addEventListener('click', () => ponerEstilo(b.dataset.estilo)));
     // En la AR de Android (WebXR) solo queda en pantalla model-viewer: el conmutador
     // entra en él mientras dura y vuelve al pie al salir. Un toque en él no es un toque
