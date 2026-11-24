@@ -979,13 +979,46 @@ gl_Position = projectionMatrix * mvPosition;`);
     escena.models.forEach(m => { m.rotateY(-theta); m.updateMatrixWorld(true); });
     return () => escena.models.forEach((m, i) => { m.quaternion.copy(antes[i]); m.updateMatrixWorld(true); });
   }
+  // Los bloques repetidos (de Rhino, 24/11/2026) llegan una vez con sus colocaciones
+  // (EXT_mesh_gpu_instancing: three.js hace un InstancedMesh). El USDZ que model-viewer hace
+  // para Quick Look escribiría una sola: se despliegan en copias que comparten la geometría
+  // (el USDZ la guarda una vez y cada copia la referencia) y después se vuelven a recoger.
+  function desplegarBloques() {
+    const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
+    const escena = sim && visor[sim];
+    if (!escena || !escena.traverse) return () => {};
+    const repetidos = [];
+    escena.traverse(o => { if (o.isInstancedMesh) repetidos.push(o); });
+    const puestos = [];
+    for (const im of repetidos) {
+      const Malla = Object.getPrototypeOf(Object.getPrototypeOf(im)).constructor;   // THREE.Mesh
+      const padre = im.parent, copias = [];
+      im.updateMatrix();
+      for (let i = 0; i < im.count; i++) {
+        const m = new Malla(im.geometry, im.material);
+        im.getMatrixAt(i, m.matrix);
+        m.matrix.premultiply(im.matrix);
+        m.matrix.decompose(m.position, m.quaternion, m.scale);
+        m.name = im.name;
+        copias.push(m);
+        padre.add(m);
+      }
+      padre.remove(im);
+      puestos.push([im, padre, copias]);
+    }
+    if (puestos.length) escena.updateMatrixWorld(true);
+    return () => {
+      for (const [im, padre, copias] of puestos) { copias.forEach(c => padre.remove(c)); padre.add(im); }
+      if (puestos.length) escena.updateMatrixWorld(true);
+    };
+  }
   // model-viewer la llama con this.prepareUSDZ() al pulsar «ver en tu espacio» en iPhone
   function prepararQuickLook() {
     if (visor.prepareUSDZ === undefined || visor.hasOwnProperty('prepareUSDZ')) return;
     const original = visor.prepareUSDZ.bind(visor);
     visor.prepareUSDZ = async () => {
-      const deshacer = paraQuickLook(), desgirar = giroParaQuickLook();
-      try { return await original(); } finally { desgirar(); deshacer(); }
+      const recoger = desplegarBloques(), deshacer = paraQuickLook(), desgirar = giroParaQuickLook();
+      try { return await original(); } finally { desgirar(); deshacer(); recoger(); }
     };
   }
 
