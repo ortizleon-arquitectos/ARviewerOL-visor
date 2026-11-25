@@ -176,7 +176,24 @@
   async function abrirCifrado(id, clave) {
     const r = await fetch('m/' + id + '.bin', { cache: 'no-cache' });
     if (!r.ok) throw new Error('no-esta');
-    const caja = new Uint8Array(await r.arrayBuffer());
+    let caja = new Uint8Array(await r.arrayBuffer());
+    // Un modelo grande va por trozos (25/11/2026; GitHub no acepta uno de 40 MB de una vez):
+    // m/<id>.bin es entonces su índice, «ARVP» + {partes}. Se bajan a la vez y se juntan; los
+    // trozos juntos son el modelo cifrado de siempre. Se llaman por su contenido: no caducan.
+    if (caja.length < 65536 && new TextDecoder().decode(caja.slice(0, 4)) === 'ARVP') {
+      const ind = JSON.parse(new TextDecoder().decode(caja.slice(4)));
+      const partes = Array.isArray(ind.partes) ? ind.partes : [];
+      if (!partes.length || !partes.every(n => typeof n === 'string' && /^[\w-]+\.[0-9a-f]+\.\d+\.bin$/.test(n)))
+        throw new Error('formato');
+      const trozos = await Promise.all(partes.map(async n => {
+        const q = await fetch('m/' + n);
+        if (!q.ok) throw new Error('no-esta');
+        return new Uint8Array(await q.arrayBuffer());
+      }));
+      caja = new Uint8Array(trozos.reduce((s, t) => s + t.length, 0));
+      let o = 0;
+      for (const t of trozos) { caja.set(t, o); o += t.length; }
+    }
     const llave = await crypto.subtle.importKey('raw', deB64url(clave), 'AES-GCM', false, ['decrypt']);
     const claro = new Uint8Array(await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: caja.slice(0, 12) }, llave, caja.slice(12)));
