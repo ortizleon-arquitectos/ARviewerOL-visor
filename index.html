@@ -65,14 +65,50 @@
   .estilos.en-ar { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%);
     bottom: calc(env(safe-area-inset-bottom) + 28px); }
   .estilos.en-ar button { height: 38px; padding: 0 16px; font-size: 15px; }
-  /* Las opciones de diseño (25/11/2026): una pastilla por carpeta, como la de los modos,
-     encima de ella. En la AR de Android, también dentro, encima del conmutador de modos */
-  .opciones { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-  .opciones .estilos { display: flex; flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 32px); }
+  /* Las opciones de diseño (25/11/2026): un botón pequeño encima de los modos que abre una hoja a
+     la derecha con cada carpeta y sus opciones (en pastillas eran demasiado grandes en el móvil y
+     en el ordenador). En la AR de Android, los dos entran en model-viewer */
+  .opciones { display: flex; justify-content: center; }
+  .opciones-boton { display: inline-flex; align-items: center; gap: 6px; max-width: calc(100vw - 40px);
+    height: 32px; padding: 0 12px 0 14px; border: 0; border-radius: 99px; cursor: pointer;
+    background: rgba(255,255,255,.82); box-shadow: 0 2px 10px rgba(38,38,38,.12);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    font: 600 13px var(--serie); color: var(--tenue); }
+  .opciones-boton b { color: var(--tinta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .opciones-boton svg { width: 15px; height: 15px; flex: none; transition: transform .15s; }
+  .opciones-boton[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .opciones-hoja { position: fixed; z-index: 4; right: 12px; top: calc(env(safe-area-inset-top) + 64px);
+    width: min(300px, calc(100vw - 24px)); max-height: calc(100% - env(safe-area-inset-top) - 210px);
+    display: flex; flex-direction: column; border-radius: 14px; background: rgba(255,255,255,.96);
+    box-shadow: 0 8px 30px rgba(38,38,38,.18); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .opciones-cab { display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 8px 6px 16px; font: 700 14px var(--serie); color: var(--tinta); }
+  .opciones-cab button { width: 30px; height: 30px; border: 0; border-radius: 99px; background: none;
+    color: var(--tenue); cursor: pointer; display: grid; place-items: center; }
+  .opciones-cab button svg { width: 16px; height: 16px; }
+  /* lo que se desplaza va dentro, con un margen arriba y abajo igual al radio (el scroll no
+     se monta en la esquina); el scroll, el de la casa: fino, sin canal, el pulgar redondo */
+  .opciones-lista { overflow-y: auto; padding: 0 8px 14px; margin-bottom: 0;
+    scrollbar-width: thin; scrollbar-color: var(--filete) transparent; }
+  .opciones-lista::-webkit-scrollbar { width: 10px; }
+  .opciones-lista::-webkit-scrollbar-track { background: transparent; margin: 14px 0; }
+  .opciones-lista::-webkit-scrollbar-thumb { background: var(--filete); border-radius: 99px;
+    border: 3px solid transparent; background-clip: padding-box; }
+  .opciones-carpeta { margin: 10px 8px 4px; font: 700 11px var(--serie); letter-spacing: .06em;
+    text-transform: uppercase; color: var(--tenue); }
+  .opciones-lista button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px;
+    padding: 8px 10px; border: 0; border-radius: 10px; background: none; cursor: pointer; text-align: left;
+    font: 500 14px var(--serie); color: var(--tinta); }
+  .opciones-lista button::before { content: ""; flex: none; width: 14px; height: 14px; border-radius: 99px;
+    box-sizing: border-box; border: 1.5px solid var(--filete); }
+  .opciones-lista button[aria-pressed="true"] { background: rgba(63,85,68,.09); font-weight: 700; }
+  .opciones-lista button[aria-pressed="true"]::before { border: 4px solid var(--oliva); }
   .opciones.en-ar { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%);
     bottom: calc(env(safe-area-inset-bottom) + 82px); }
-  .opciones.en-ar button { height: 38px; padding: 0 16px; font-size: 15px; }
-  body.portada .cabecera, body.portada .pie, body.portada .estilos, body.portada .opciones { display: none !important; }
+  .opciones.en-ar .opciones-boton { height: 38px; font-size: 15px; }
+  .opciones-hoja.en-ar { position: absolute; }
+  body.portada .cabecera, body.portada .pie, body.portada .estilos, body.portada .opciones,
+  body.portada .opciones-hoja { display: none !important; }
   body.portada model-viewer { --progress-bar-height: 0px; }   /* salía como una raya verde arriba de la tarjeta */
   .error { position: fixed; inset: 0; display: none; place-items: center; padding: 30px;
     text-align: center; color: var(--tenue); }
@@ -94,7 +130,12 @@
 </model-viewer>
 
 <div class="pie">
-  <div class="opciones" id="opciones" hidden></div>
+  <div class="opciones" id="opciones" hidden>
+    <button class="opciones-boton" id="opciones-boton" aria-expanded="false" aria-controls="opciones-hoja">
+      <span>Opciones</span><b id="opciones-elegida"></b>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+  </div>
   <div class="estilos" id="estilos" role="group" aria-label="Cómo se ve la maqueta">
     <button data-estilo="blanco" aria-pressed="false">Blanco</button>
     <button data-estilo="texturas" aria-pressed="true">Texturas</button>
@@ -114,6 +155,12 @@
   <div class="sin-ar" id="sin-ar">Gira el modelo con el dedo. Para verlo en tu espacio, abre esta
     página en un móvil o una tableta.</div>
 </div>
+<aside class="opciones-hoja" id="opciones-hoja" role="dialog" aria-label="Opciones de diseño" hidden>
+  <div class="opciones-cab"><span>Opciones de diseño</span>
+    <button type="button" id="opciones-cerrar" aria-label="Cerrar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+  <div class="opciones-lista" id="opciones-lista"></div>
+</aside>
 <div class="error" id="error">No se ha podido abrir el modelo.</div>
 
 <script>
@@ -312,8 +359,12 @@
       const n = nodoDeOpcion(op.nodo);
       if (n) n.visible = j === ELEGIDA[i];
     }));
-    document.querySelectorAll('#opciones button').forEach(b =>
+    document.querySelectorAll('#opciones-lista button').forEach(b =>
       b.setAttribute('aria-pressed', String(ELEGIDA[+b.dataset.carpeta] === +b.dataset.opcion)));
+    // en el botón, la elegida (con varias carpetas, las de todas)
+    const elegidas = OPCIONES.map((c, i) => [c, i]).filter(([c]) => c.opciones.length > 1)
+      .map(([c, i]) => c.opciones[ELEGIDA[i]].nombre);
+    document.getElementById('opciones-elegida').textContent = elegidas.join(' · ');
     const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
     const escena = sim && visor[sim];
     if (escena) {
@@ -322,27 +373,39 @@
     }
   }
   function prepararOpciones() {
-    const caja = document.getElementById('opciones');
+    const caja = document.getElementById('opciones'), boton = document.getElementById('opciones-boton');
+    const hoja = document.getElementById('opciones-hoja'), lista = document.getElementById('opciones-lista');
     // con una sola en una carpeta no hay nada que elegir: se ve, sin conmutador
     const conConmutador = OPCIONES.map((c, i) => [c, i]).filter(([c]) => c.opciones.length > 1);
-    caja.innerHTML = conConmutador.map(([c, i]) =>
-      '<div class="estilos" role="group" aria-label="' + esc(c.carpeta || 'Opciones') + '" title="' + esc(c.carpeta || '') + '">' +
-      c.opciones.map((op, j) => '<button data-carpeta="' + i + '" data-opcion="' + j + '" aria-pressed="false">' +
-        esc(op.nombre) + '</button>').join('') + '</div>').join('');
+    // la carpeta, por su último nombre («Opciones cubierta/Opciones lamas» → «Opciones lamas»)
+    const rotulo = c => (c.carpeta || '').split('/').filter(Boolean).pop() || 'Opciones';
+    lista.innerHTML = conConmutador.map(([c, i]) =>
+      '<div class="opciones-carpeta" title="' + esc(c.carpeta || '') + '">' + esc(rotulo(c)) + '</div>' +
+      c.opciones.map((op, j) => '<button type="button" data-carpeta="' + i + '" data-opcion="' + j +
+        '" aria-pressed="false">' + esc(op.nombre) + '</button>').join('')).join('');
     caja.hidden = !conConmutador.length;
-    caja.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    const abrir = si => { hoja.hidden = !si; boton.setAttribute('aria-expanded', String(si)); };
+    boton.addEventListener('click', () => abrir(hoja.hidden));
+    document.getElementById('opciones-cerrar').addEventListener('click', () => abrir(false));
+    // al tocar fuera (la maqueta), se cierra; elegir no la cierra: se comparan seguidas
+    visor.addEventListener('pointerdown', e => {
+      if (!caja.contains(e.target) && !hoja.contains(e.target)) abrir(false);
+    });
+    lista.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
       ELEGIDA[+b.dataset.carpeta] = +b.dataset.opcion;
       ponerOpciones();
     }));
     // En la AR de Android, dentro de model-viewer (como el conmutador de modos); un toque en
-    // él no es un toque en la maqueta
+    // ellos no es un toque en la maqueta
     const pie = document.querySelector('.pie');
-    caja.addEventListener('beforexrselect', e => e.preventDefault());
+    [caja, hoja].forEach(x => x.addEventListener('beforexrselect', e => e.preventDefault()));
     visor.addEventListener('ar-status', e => {
       if (e.detail.status === 'session-started' && !caja.hidden) {
-        caja.classList.add('en-ar'); visor.appendChild(caja);
+        caja.classList.add('en-ar'); hoja.classList.add('en-ar');
+        visor.appendChild(caja); visor.appendChild(hoja);
       } else if (e.detail.status === 'not-presenting' || e.detail.status === 'failed') {
-        caja.classList.remove('en-ar'); pie.prepend(caja);
+        caja.classList.remove('en-ar'); hoja.classList.remove('en-ar');
+        pie.prepend(caja); document.body.insertBefore(hoja, document.getElementById('error'));
       }
     });
     ponerOpciones();
@@ -365,6 +428,41 @@
       if (d < 0) { o.position.y += d; o.updateMatrixWorld(true); movidos.push([o, d]); }
     });
     return () => movidos.forEach(([o, d]) => { o.position.y -= d; o.updateMatrixWorld(true); });
+  }
+  // Para Quick Look: lo transparente (el vidrio, las copas), al final de la escena, y lo que no se ve
+  // nada (vidrio de alfa 0: las barandillas del atrio de 628), fuera. Aquí three.js pinta lo opaco y
+  // luego lo transparente; en el iPhone (25/11/2026, 628) desaparecían los pavimentos y el césped que
+  // se ven a través del vidrio del edificio (sus materiales, del fichero de paisajismo, iban después
+  // del vidrio) y no las calles lejanas. Se mueven sin cambiar dónde están (attach) y vuelven después.
+  function transparentesAlFinal() {
+    const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
+    const escena = sim && visor[sim];
+    const raiz = escena && escena.models && escena.models[0];
+    if (!raiz || !raiz.traverse) return () => {};
+    raiz.updateMatrixWorld(true);
+    const lista = [], apagados = [];
+    raiz.traverse(o => {
+      if (!o.isMesh || !o.material || o.isLineSegments || o.isLine) return;
+      const m = [].concat(o.material)[0];
+      if (!m || !m.transparent) return;
+      if (m.opacity <= 0.05 && !m.map) { apagados.push(o); return; }
+      lista.push(o);
+    });
+    apagados.forEach(o => { o.visible = false; });
+    const movidos = lista.map(o => {
+      const padre = o.parent, sitio = padre.children.indexOf(o);
+      const trs = [o.position.clone(), o.quaternion.clone(), o.scale.clone()];
+      raiz.attach(o);
+      return [o, padre, sitio, trs];
+    });
+    return () => {
+      for (const [o, padre, sitio, trs] of movidos.reverse()) {
+        raiz.remove(o); padre.children.splice(sitio, 0, o); o.parent = padre;
+        o.position.copy(trs[0]); o.quaternion.copy(trs[1]); o.scale.copy(trs[2]);
+      }
+      apagados.forEach(o => { o.visible = true; });
+      raiz.updateMatrixWorld(true);
+    };
   }
   // Para Quick Look: las opciones apagadas, fuera de la escena mientras model-viewer hace el USDZ
   // (que no dependa de si respeta lo apagado); después vuelven a su sitio
@@ -1171,8 +1269,10 @@ gl_Position = projectionMatrix * mvPosition;`);
     const original = visor.prepareUSDZ.bind(visor);
     visor.prepareUSDZ = async () => {
       const sinApagadas = quitarOpcionesApagadas(), subir = calzoParaQuickLook();
-      const recoger = desplegarBloques(), deshacer = paraQuickLook(), desgirar = giroParaQuickLook();
-      try { return await original(); } finally { desgirar(); deshacer(); recoger(); subir(); sinApagadas(); }
+      const recoger = desplegarBloques(), alFinal = transparentesAlFinal();
+      const deshacer = paraQuickLook(), desgirar = giroParaQuickLook();
+      try { return await original(); }
+      finally { desgirar(); deshacer(); alFinal(); recoger(); subir(); sinApagadas(); }
     };
   }
 
