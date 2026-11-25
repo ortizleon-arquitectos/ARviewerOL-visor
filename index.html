@@ -306,6 +306,7 @@
     edificio: [[255, 255, 255]], entorno: [[255, 255, 255]], terreno: [[255, 255, 255]],
     agua: [[215, 235, 240]], verde: [[226, 234, 214]], hierba: [[206, 222, 190]],
     copa: [[200, 210, 150]], tronco: [[175, 160, 140]], vidrio: [[230, 236, 240], 0.35],
+    persona: [[38, 38, 38]],
   };
   // Madera: la vegetación (césped, jardineras) en maderas más oscuras, para que se
   // distinga del resto, como en una maqueta de taller; y el agua, metacrilato azulado y
@@ -319,8 +320,9 @@
     copa: [[198, 180, 138]], tronco: [[178, 152, 114]], vidrio: [[234, 238, 236], 0.3],
     mueble: [[247, 246, 242]], texto: [[247, 246, 242]],
     acera: [[212, 194, 163]], calzada: [[182, 165, 138]],
+    persona: [[62, 52, 44]],
   };
-  const SIN_VETA = ['vidrio', 'agua', 'mueble', 'texto'];
+  const SIN_VETA = ['vidrio', 'agua', 'mueble', 'texto', 'persona'];
   // La transparencia de los árboles: la elige el estudio al publicar (en proyecto.json)
   const ALFA_ARBOLES = typeof p.alfa_arboles === 'number' && p.alfa_arboles >= 0.2 && p.alfa_arboles <= 1 ? p.alfa_arboles : 0.8;
   // Y la del vidrio (null: como en cada modo; en Texturas, la de su material de Revit)
@@ -759,6 +761,42 @@ gl_Position = projectionMatrix * mvPosition;`);
     m.customProgramCacheKey = () => 'follajeOL';
     m.needsUpdate = true;
   }
+  // Las personas en silueta (25/11/2026, ar_personas.py): una tarjeta cada una, que gira
+  // sobre su eje vertical hacia la cámara (nunca se ven de canto ni del revés). _pie: el pie
+  // de la tarjeta (xyz) y lo que va de cada vértice a él de lado (w); lo de arriba, por su
+  // altura sobre el pie. Las sentadas llevan w = 0 y no giran (dos tarjetas fijas en cruz:
+  // una fila de butacas que se vuelve hacia quien la rodea no se cree). Quick Look no lleva
+  // esto: las deja como están, como recortes. Son
+  // macizas y oscuras en los tres modos, como las siluetas de los planos (su color, en BLANCO
+  // y MADERA; en Texturas, el del GLB). Su dibujo va también como luz propia, por si algún
+  // día lleva tonos: Blanco casi es toda luz propia, y plana los borraría.
+  function personaViva(m) {
+    if (m.userData.persona) return;
+    m.userData.persona = true;
+    if (m.map && m.emissiveMap !== m.map) m.emissiveMap = m.map;
+    m.onBeforeCompile = sh => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute vec4 _pie;')
+        .replace('#include <project_vertex>', `vec4 mvPosition;
+if (_pie.w != 0.0) {
+  vec3 pieM = (modelMatrix * vec4(_pie.xyz, 1.0)).xyz;
+  vec3 arriba = (modelMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
+  float esc = length(arriba);
+  arriba /= esc;
+  vec3 aCam = cameraPosition - pieM;
+  vec3 lado = cross(arriba, aCam);
+  float l = length(lado);
+  lado = l > 1e-6 ? lado / l : normalize((modelMatrix * vec4(1.0, 0.0, 0.0, 0.0)).xyz);
+  vec3 p = pieM + lado * _pie.w * esc + arriba * (transformed.y - _pie.y) * esc;
+  mvPosition = viewMatrix * vec4(p, 1.0);
+} else {
+  mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+}
+gl_Position = projectionMatrix * mvPosition;`);
+    };
+    m.customProgramCacheKey = () => 'personaOL';
+    m.needsUpdate = true;
+  }
   // Mientras se ve la página, unas 30 veces por segundo (model-viewer solo dibuja
   // cuando algo cambia; más, y el móvil gasta batería para nada)
   let soplando = false;
@@ -1054,6 +1092,8 @@ gl_Position = projectionMatrix * mvPosition;`);
           follaje = true;
         }
         if (FOLLAJE_NUEVO) mats.filter(m => m.name && m.name.startsWith('verde')).forEach(cespedVivo);
+        // las siluetas de las personas, de cara a quien mira
+        if (o.geometry && o.geometry.attributes._pie) mats.filter(m => m.name === 'persona').forEach(personaViva);
         const aguas = mats.filter(m => m.name && m.name.startsWith('agua'));
         if (aguas.length) { aguas.forEach(aguaViva); agua = true; }
         mats.filter(m => m.name && PAPELES_REVIT.includes(m.name.split(';')[0])).forEach(revitVivo);
@@ -1120,7 +1160,8 @@ gl_Position = projectionMatrix * mvPosition;`);
     // Las copas y las matas de hierba de los GLB desde el 16/11/2026 son tarjetas con
     // el dibujo de sus hojas, recortado por su transparencia: el dibujo va en todos
     // los modos (sin él serían cuadrados) y el recorte también, con o sin transparencia
-    const recortada = (papel === 'copa' || papel === 'hierba') && !!o.textura;
+    // (y las siluetas de las personas, desde el 25/11/2026)
+    const recortada = (papel === 'copa' || papel === 'hierba' || papel === 'persona') && !!o.textura;
     const ponerAlfa = a => {
       if (!m.setAlphaMode) return;
       // (con BLEND, el recorte lo pone escenaDelEstilo: model-viewer lo quita)
@@ -1163,7 +1204,7 @@ gl_Position = projectionMatrix * mvPosition;`);
     } else {
       const [c0, aTabla] = MADERA[papel] || MADERA.edificio;
       // el dibujo de las hojas es gris (oscurece lo que pinta): su madera, más clara
-      const c = recortada ? c0.map(x => Math.min(255, Math.round(x * 1.22))) : c0;
+      const c = recortada && papel !== 'persona' ? c0.map(x => Math.min(255, Math.round(x * 1.22))) : c0;
       const a = alfaCopa != null ? alfaCopa : alfaVidrio != null ? alfaVidrio : aTabla;
       ponerAlfa(a);
       pbr.setBaseColorFactor(deSRGB(c, a));
