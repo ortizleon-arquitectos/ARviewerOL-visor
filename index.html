@@ -347,6 +347,25 @@
     });
     ponerOpciones();
   }
+  // El calzo (ar_glb: un triángulo de 1 mm, 1 cm de maqueta por debajo de todo) apoya la maqueta en
+  // la mesa. En el iPhone no bastaba (25/11/2026, 628 de Rhino a 1:500 sobre moqueta): Quick Look
+  // esconde lo que queda por debajo de la mesa que ve con su sensor de profundidad, unos 2 cm más
+  // alta que el plano en el que posa; se perdían los pavimentos y el césped (a 1-2 cm) y no las
+  // copas de los arbustos (a 2-3 cm). Para Quick Look, el calzo baja a QL_CALZO_M y la maqueta
+  // queda esos centímetros por encima; aquí y en la AR de Android sigue como viene.
+  const QL_CALZO_M = 0.03;
+  function calzoParaQuickLook() {
+    const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
+    const escena = sim && visor[sim];
+    const movidos = [];
+    if (escena && escena.traverse) escena.traverse(o => {
+      if (!o.isMesh || !o.material || o.material.name !== 'calzo' || !o.geometry) return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      const d = -QL_CALZO_M * (p.escala || 1) - o.geometry.boundingBox.min.y;   // en metros reales (los del GLB)
+      if (d < 0) { o.position.y += d; o.updateMatrixWorld(true); movidos.push([o, d]); }
+    });
+    return () => movidos.forEach(([o, d]) => { o.position.y -= d; o.updateMatrixWorld(true); });
+  }
   // Para Quick Look: las opciones apagadas, fuera de la escena mientras model-viewer hace el USDZ
   // (que no dependa de si respeta lo apagado); después vuelven a su sitio
   function quitarOpcionesApagadas() {
@@ -1151,9 +1170,9 @@ gl_Position = projectionMatrix * mvPosition;`);
     if (visor.prepareUSDZ === undefined || visor.hasOwnProperty('prepareUSDZ')) return;
     const original = visor.prepareUSDZ.bind(visor);
     visor.prepareUSDZ = async () => {
-      const sinApagadas = quitarOpcionesApagadas();
+      const sinApagadas = quitarOpcionesApagadas(), subir = calzoParaQuickLook();
       const recoger = desplegarBloques(), deshacer = paraQuickLook(), desgirar = giroParaQuickLook();
-      try { return await original(); } finally { desgirar(); deshacer(); recoger(); sinApagadas(); }
+      try { return await original(); } finally { desgirar(); deshacer(); recoger(); subir(); sinApagadas(); }
     };
   }
 
