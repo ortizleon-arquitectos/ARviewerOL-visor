@@ -320,6 +320,8 @@
     copa: [[198, 180, 138]], tronco: [[178, 152, 114]], vidrio: [[234, 238, 236], 0.3],
     mueble: [[247, 246, 242]], texto: [[247, 246, 242]],
     acera: [[212, 194, 163]], calzada: [[182, 165, 138]],
+    // de Rhino (25/11/2026): los caminos, más claros que la acera, y la tierra, más anaranjada
+    camino: [[231, 217, 190]], tierra: [[222, 186, 136]],
     persona: [[62, 52, 44]],
   };
   const SIN_VETA = ['vidrio', 'agua', 'mueble', 'texto', 'persona'];
@@ -461,7 +463,7 @@
   // más sosos que en Revit): lo compensa el shader de REVIT, solo en el visor.
   const DESATURA = 0;
   const REVIT = { sat: 1.08, luz: 1.1 };
-  const PAPELES_REVIT = ['edificio', 'entorno', 'terreno', 'agua', 'tronco', 'mueble', 'texto', 'acera', 'calzada'];
+  const PAPELES_REVIT = ['edificio', 'entorno', 'terreno', 'agua', 'tronco', 'mueble', 'texto', 'acera', 'calzada', 'camino', 'tierra'];
   // En Texturas, los árboles de verdad, en los GLB de antes del 06/11/2026 (los traían
   // en el verde pálido de maqueta; los nuevos traen el suyo, sacado de Revit)
   const ARBOLES = { copa: [[112, 140, 86]], tronco: [[118, 98, 78]] };
