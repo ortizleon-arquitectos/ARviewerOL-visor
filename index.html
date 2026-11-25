@@ -65,7 +65,14 @@
   .estilos.en-ar { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%);
     bottom: calc(env(safe-area-inset-bottom) + 28px); }
   .estilos.en-ar button { height: 38px; padding: 0 16px; font-size: 15px; }
-  body.portada .cabecera, body.portada .pie, body.portada .estilos { display: none !important; }
+  /* Las opciones de diseño (25/11/2026): una pastilla por carpeta, como la de los modos,
+     encima de ella. En la AR de Android, también dentro, encima del conmutador de modos */
+  .opciones { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .opciones .estilos { display: flex; flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 32px); }
+  .opciones.en-ar { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom) + 82px); }
+  .opciones.en-ar button { height: 38px; padding: 0 16px; font-size: 15px; }
+  body.portada .cabecera, body.portada .pie, body.portada .estilos, body.portada .opciones { display: none !important; }
   body.portada model-viewer { --progress-bar-height: 0px; }   /* salía como una raya verde arriba de la tarjeta */
   .error { position: fixed; inset: 0; display: none; place-items: center; padding: 30px;
     text-align: center; color: var(--tenue); }
@@ -87,6 +94,7 @@
 </model-viewer>
 
 <div class="pie">
+  <div class="opciones" id="opciones" hidden></div>
   <div class="estilos" id="estilos" role="group" aria-label="Cómo se ve la maqueta">
     <button data-estilo="blanco" aria-pressed="false">Blanco</button>
     <button data-estilo="texturas" aria-pressed="true">Texturas</button>
@@ -257,12 +265,81 @@
   const ensenar = () => { try { visor.dismissPoster(); } catch (e) {} };
   visor.addEventListener('load', () => {
     setTimeout(ensenar, 8000);
+    try { prepararOpciones(); } catch (e) { console.error('opciones', e); }
     prepararEstilos(abreEn)
       .catch(e => console.error('estilos', e))
       .finally(() => requestAnimationFrame(ensenar));
   }, { once: true });
   ponerVista(p.camara);
   visor.src = p.src;
+
+  // ── Las opciones de diseño (25/11/2026) ─────────────────────────────────
+  // Desde Rhino se pueden mandar varias opciones de una carpeta para compararlas: cada una va
+  // en su grupo del GLB («opcion_0», «opcion_1»…) y p.opciones dice cuáles son
+  // ([{carpeta, opciones: [{nombre, nodo}]}]; nodo null: «Ninguna», la carpeta vacía). Se ve la
+  // elegida de cada carpeta y las demás se apagan. La AR de Android (WebXR) es esta misma escena:
+  // sale la elegida y se cambia también dentro, con el conmutador; Quick Look (iPhone) se lleva la
+  // elegida al entrar (ver quitarOpcionesApagadas) y, dentro, no se puede cambiar.
+  const OPCIONES = (Array.isArray(p.opciones) ? p.opciones : [])
+    .filter(c => c && Array.isArray(c.opciones) && c.opciones.length);
+  const ELEGIDA = OPCIONES.map(() => 0);
+  function nodoDeOpcion(nombre) {
+    const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
+    const escena = sim && visor[sim];
+    let hallado = null;
+    if (nombre && escena && escena.traverse) escena.traverse(o => { if (!hallado && o.name === nombre) hallado = o; });
+    return hallado;
+  }
+  function ponerOpciones() {
+    OPCIONES.forEach((c, i) => c.opciones.forEach((op, j) => {
+      const n = nodoDeOpcion(op.nodo);
+      if (n) n.visible = j === ELEGIDA[i];
+    }));
+    document.querySelectorAll('#opciones button').forEach(b =>
+      b.setAttribute('aria-pressed', String(ELEGIDA[+b.dataset.carpeta] === +b.dataset.opcion)));
+    const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
+    const escena = sim && visor[sim];
+    if (escena) {
+      try { if (escena.updateShadow) escena.updateShadow(); } catch (e) {}
+      try { if (escena.queueRender) escena.queueRender(); } catch (e) {}
+    }
+  }
+  function prepararOpciones() {
+    const caja = document.getElementById('opciones');
+    // con una sola en una carpeta no hay nada que elegir: se ve, sin conmutador
+    const conConmutador = OPCIONES.map((c, i) => [c, i]).filter(([c]) => c.opciones.length > 1);
+    caja.innerHTML = conConmutador.map(([c, i]) =>
+      '<div class="estilos" role="group" aria-label="' + esc(c.carpeta || 'Opciones') + '" title="' + esc(c.carpeta || '') + '">' +
+      c.opciones.map((op, j) => '<button data-carpeta="' + i + '" data-opcion="' + j + '" aria-pressed="false">' +
+        esc(op.nombre) + '</button>').join('') + '</div>').join('');
+    caja.hidden = !conConmutador.length;
+    caja.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+      ELEGIDA[+b.dataset.carpeta] = +b.dataset.opcion;
+      ponerOpciones();
+    }));
+    // En la AR de Android, dentro de model-viewer (como el conmutador de modos); un toque en
+    // él no es un toque en la maqueta
+    const pie = document.querySelector('.pie');
+    caja.addEventListener('beforexrselect', e => e.preventDefault());
+    visor.addEventListener('ar-status', e => {
+      if (e.detail.status === 'session-started' && !caja.hidden) {
+        caja.classList.add('en-ar'); visor.appendChild(caja);
+      } else if (e.detail.status === 'not-presenting' || e.detail.status === 'failed') {
+        caja.classList.remove('en-ar'); pie.prepend(caja);
+      }
+    });
+    ponerOpciones();
+  }
+  // Para Quick Look: las opciones apagadas, fuera de la escena mientras model-viewer hace el USDZ
+  // (que no dependa de si respeta lo apagado); después vuelven a su sitio
+  function quitarOpcionesApagadas() {
+    const quitadas = [];
+    OPCIONES.forEach(c => c.opciones.forEach(op => {
+      const n = nodoDeOpcion(op.nodo);
+      if (n && !n.visible && n.parent) { quitadas.push([n, n.parent]); n.parent.remove(n); }
+    }));
+    return () => quitadas.forEach(([n, padre]) => padre.add(n));
+  }
 
   // ── La vista con la que se abre ─────────────────────────────────────────
   // La elegida en ARviewerOL girando la previa («Vista al abrir»). Va en metros
@@ -321,7 +398,7 @@
     mueble: [[247, 246, 242]], texto: [[247, 246, 242]],
     acera: [[212, 194, 163]], calzada: [[182, 165, 138]],
     // de Rhino (25/11/2026): los caminos, más claros que la acera, y la tierra, más anaranjada
-    camino: [[231, 217, 190]], tierra: [[222, 186, 136]],
+    camino: [[231, 217, 190]], tierra: [[236, 208, 156]],   // la tierra, más clara que el césped (25/11)
     persona: [[62, 52, 44]],
   };
   const SIN_VETA = ['vidrio', 'agua', 'mueble', 'texto', 'persona'];
@@ -1057,8 +1134,9 @@ gl_Position = projectionMatrix * mvPosition;`);
     if (visor.prepareUSDZ === undefined || visor.hasOwnProperty('prepareUSDZ')) return;
     const original = visor.prepareUSDZ.bind(visor);
     visor.prepareUSDZ = async () => {
+      const sinApagadas = quitarOpcionesApagadas();
       const recoger = desplegarBloques(), deshacer = paraQuickLook(), desgirar = giroParaQuickLook();
-      try { return await original(); } finally { desgirar(); deshacer(); recoger(); }
+      try { return await original(); } finally { desgirar(); deshacer(); recoger(); sinApagadas(); }
     };
   }
 
