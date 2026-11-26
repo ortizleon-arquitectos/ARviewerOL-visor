@@ -24,9 +24,10 @@
   model-viewer { position: fixed; inset: 0; width: 100%; height: 100%;
     --poster-color: transparent; --progress-bar-color: var(--oliva); }
   .cabecera { position: fixed; z-index: 2; top: 0; left: 0; right: 0;
-    display: flex; align-items: center; gap: 12px;
+    display: flex; align-items: flex-start; gap: 12px;
     padding: calc(env(safe-area-inset-top) + 16px) 20px 16px; pointer-events: none; }
-  .cabecera img { height: 24px; width: auto; flex: none; }
+  .cabecera > div { min-width: 0; }
+  .cabecera img { height: 24px; width: auto; flex: none; margin-top: 5px; }
   .cabecera .nombre { font-size: 17px; font-weight: 700; letter-spacing: -.01em; line-height: 1.2; }
   .cabecera .estudio { font-size: 12px; color: var(--tenue); }
   .pie { position: fixed; z-index: 2; left: 0; right: 0; bottom: 0;
@@ -65,50 +66,53 @@
   .estilos.en-ar { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%);
     bottom: calc(env(safe-area-inset-bottom) + 28px); }
   .estilos.en-ar button { height: 38px; padding: 0 16px; font-size: 15px; }
-  /* Las opciones de diseño (25/11/2026): un botón pequeño encima de los modos que abre una hoja a
-     la derecha con cada carpeta y sus opciones (en pastillas eran demasiado grandes en el móvil y
-     en el ordenador). En la AR de Android, los dos entran en model-viewer */
-  .opciones { display: flex; justify-content: center; }
-  .opciones-boton { display: inline-flex; align-items: center; gap: 6px; max-width: calc(100vw - 40px);
-    height: 32px; padding: 0 12px 0 14px; border: 0; border-radius: 99px; cursor: pointer;
+  /* Las opciones de diseño (26/11/2026): un desplegable bajo el nombre de la maqueta. La lista se
+     abre debajo, con cada carpeta y sus opciones; se ven 3 opciones como mucho y, si hay más, se
+     desplaza (antes: botonera, y luego una hoja a la derecha). En la AR de Android entra en
+     model-viewer, arriba a la izquierda, donde estaba */
+  .opciones { position: relative; margin-top: 10px; pointer-events: auto; width: max-content;
+    max-width: calc(100vw - 40px); }
+  .opciones-boton { display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+    height: 32px; padding: 0 10px 0 13px; border: 0; border-radius: 99px; cursor: pointer;
     background: rgba(255,255,255,.82); box-shadow: 0 2px 10px rgba(38,38,38,.12);
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
     font: 600 13px var(--serie); color: var(--tenue); }
+  .opciones-boton span { white-space: nowrap; }
   .opciones-boton b { color: var(--tinta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .opciones-boton svg { width: 15px; height: 15px; flex: none; transition: transform .15s; }
   .opciones-boton[aria-expanded="true"] svg { transform: rotate(180deg); }
-  .opciones-hoja { position: fixed; z-index: 4; right: 12px; top: calc(env(safe-area-inset-top) + 64px);
-    width: min(300px, calc(100vw - 24px)); max-height: calc(100% - env(safe-area-inset-top) - 210px);
-    display: flex; flex-direction: column; border-radius: 14px; background: rgba(255,255,255,.96);
-    box-shadow: 0 8px 30px rgba(38,38,38,.18); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
-  .opciones-cab { display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 8px 6px 16px; font: 700 14px var(--serie); color: var(--tinta); }
-  .opciones-cab button { width: 30px; height: 30px; border: 0; border-radius: 99px; background: none;
-    color: var(--tenue); cursor: pointer; display: grid; place-items: center; }
-  .opciones-cab button svg { width: 16px; height: 16px; }
-  /* lo que se desplaza va dentro, con un margen arriba y abajo igual al radio (el scroll no
-     se monta en la esquina); el scroll, el de la casa: fino, sin canal, el pulgar redondo */
-  .opciones-lista { overflow-y: auto; padding: 0 8px 14px; margin-bottom: 0;
+  /* El recuadro lleva arriba y abajo un margen igual a su radio y lo que se desplaza va dentro:
+     el pulgar del scroll no se monta en la esquina. El scroll, el de la casa: fino, sin canal,
+     el pulgar redondo y separado del borde, en el color del filete */
+  .opciones-menu { position: absolute; z-index: 4; top: calc(100% + 6px); left: 0;
+    width: min(300px, calc(100vw - 40px)); padding: 12px 0; border-radius: 12px;
+    background: rgba(255,255,255,.96); box-shadow: 0 8px 30px rgba(38,38,38,.18);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .opciones-lista { overflow-y: auto; overscroll-behavior: contain; padding: 0 6px;
     scrollbar-width: thin; scrollbar-color: var(--filete) transparent; }
   .opciones-lista::-webkit-scrollbar { width: 10px; }
-  .opciones-lista::-webkit-scrollbar-track { background: transparent; margin: 14px 0; }
+  .opciones-lista::-webkit-scrollbar-track { background: transparent; }
   .opciones-lista::-webkit-scrollbar-thumb { background: var(--filete); border-radius: 99px;
     border: 3px solid transparent; background-clip: padding-box; }
-  .opciones-carpeta { margin: 10px 8px 4px; font: 700 11px var(--serie); letter-spacing: .06em;
-    text-transform: uppercase; color: var(--tenue); }
-  .opciones-lista button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px;
-    padding: 8px 10px; border: 0; border-radius: 10px; background: none; cursor: pointer; text-align: left;
+  .opciones-lista::-webkit-scrollbar-thumb:hover { background-color: var(--tenue); }
+  .opciones-lista::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  /* el nombre de la carpeta se queda arriba mientras se desplazan sus opciones */
+  .opciones-carpeta { position: sticky; top: 0; z-index: 1; padding: 2px 10px 4px;
+    background: rgba(255,255,255,.97); font: 700 11px var(--serie); letter-spacing: .06em;
+    text-transform: uppercase; color: var(--tenue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .opciones-grupo + .opciones-grupo { margin-top: 6px; }
+  .opciones-lista button { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px;
+    padding: 0 10px; border: 0; border-radius: 8px; background: none; cursor: pointer; text-align: left;
     font: 500 14px var(--serie); color: var(--tinta); }
+  .opciones-lista button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .opciones-lista button::before { content: ""; flex: none; width: 14px; height: 14px; border-radius: 99px;
     box-sizing: border-box; border: 1.5px solid var(--filete); }
   .opciones-lista button[aria-pressed="true"] { background: rgba(63,85,68,.09); font-weight: 700; }
   .opciones-lista button[aria-pressed="true"]::before { border: 4px solid var(--oliva); }
-  .opciones.en-ar { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%);
-    bottom: calc(env(safe-area-inset-bottom) + 82px); }
+  .opciones.en-ar { position: absolute; z-index: 3; margin: 0; left: 20px;
+    top: calc(env(safe-area-inset-top) + 16px); }
   .opciones.en-ar .opciones-boton { height: 38px; font-size: 15px; }
-  .opciones-hoja.en-ar { position: absolute; }
-  body.portada .cabecera, body.portada .pie, body.portada .estilos, body.portada .opciones,
-  body.portada .opciones-hoja { display: none !important; }
+  body.portada .cabecera, body.portada .pie, body.portada .estilos, body.portada .opciones { display: none !important; }
   body.portada model-viewer { --progress-bar-height: 0px; }   /* salía como una raya verde arriba de la tarjeta */
   .error { position: fixed; inset: 0; display: none; place-items: center; padding: 30px;
     text-align: center; color: var(--tenue); }
@@ -118,7 +122,16 @@
 <header class="cabecera">
   <img src="monograma.png" alt="">
   <div><div class="nombre" id="nombre">&nbsp;</div>
-       <div class="estudio">Ortiz.Leon Arquitectos</div></div>
+       <div class="estudio">Ortiz.Leon Arquitectos</div>
+    <div class="opciones" id="opciones" hidden>
+      <button class="opciones-boton" id="opciones-boton" aria-expanded="false" aria-controls="opciones-menu"
+        aria-haspopup="true"><span id="opciones-rotulo">Opciones</span><b id="opciones-elegida"></b>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="opciones-menu" id="opciones-menu" role="group" aria-label="Opciones de diseño" hidden>
+        <div class="opciones-lista" id="opciones-lista"></div>
+      </div>
+    </div></div>
 </header>
 
 <model-viewer id="visor" alt="Modelo 3D del proyecto"
@@ -130,12 +143,6 @@
 </model-viewer>
 
 <div class="pie">
-  <div class="opciones" id="opciones" hidden>
-    <button class="opciones-boton" id="opciones-boton" aria-expanded="false" aria-controls="opciones-hoja">
-      <span>Opciones</span><b id="opciones-elegida"></b>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-    </button>
-  </div>
   <div class="estilos" id="estilos" role="group" aria-label="Cómo se ve la maqueta">
     <button data-estilo="blanco" aria-pressed="false">Blanco</button>
     <button data-estilo="texturas" aria-pressed="true">Texturas</button>
@@ -155,12 +162,6 @@
   <div class="sin-ar" id="sin-ar">Gira el modelo con el dedo. Para verlo en tu espacio, abre esta
     página en un móvil o una tableta.</div>
 </div>
-<aside class="opciones-hoja" id="opciones-hoja" role="dialog" aria-label="Opciones de diseño" hidden>
-  <div class="opciones-cab"><span>Opciones de diseño</span>
-    <button type="button" id="opciones-cerrar" aria-label="Cerrar">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-  <div class="opciones-lista" id="opciones-lista"></div>
-</aside>
 <div class="error" id="error">No se ha podido abrir el modelo.</div>
 
 <script>
@@ -192,7 +193,7 @@
   // equipo: si el proyecto es de aquí, lo enseña; si no, se dice de quién es y cómo
   // hacer otra versión (con el mismo nombre, al subirla sustituye a esta).
   const ARVIEWEROL = 'http://127.0.0.1:7410';
-  const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   async function abrirEnARviewerOL() {
     const nota = document.getElementById('nota-arv');
     const decir = html => { nota.innerHTML = html; nota.hidden = false; };
@@ -361,9 +362,11 @@
     }));
     document.querySelectorAll('#opciones-lista button').forEach(b =>
       b.setAttribute('aria-pressed', String(ELEGIDA[+b.dataset.carpeta] === +b.dataset.opcion)));
-    // en el botón, la elegida (con varias carpetas, las de todas)
-    const elegidas = OPCIONES.map((c, i) => [c, i]).filter(([c]) => c.opciones.length > 1)
-      .map(([c, i]) => c.opciones[ELEGIDA[i]].nombre);
+    // en el botón, la carpeta y su elegida; con varias carpetas, «Opciones» y las de todas
+    const conConmutador = OPCIONES.map((c, i) => [c, i]).filter(([c]) => c.opciones.length > 1);
+    const elegidas = conConmutador.map(([c, i]) => c.opciones[ELEGIDA[i]].nombre);
+    document.getElementById('opciones-rotulo').textContent =
+      conConmutador.length === 1 ? rotuloCarpeta(conConmutador[0][0]) : 'Opciones';
     document.getElementById('opciones-elegida').textContent = elegidas.join(' · ');
     const sim = Object.getOwnPropertySymbols(visor).find(x => x.description === 'scene');
     const escena = sim && visor[sim];
@@ -372,41 +375,65 @@
       try { if (escena.queueRender) escena.queueRender(); } catch (e) {}
     }
   }
+  // la carpeta, por su último nombre («Opciones cubierta/Opciones lamas» → «Opciones lamas»)
+  const rotuloCarpeta = c => (c.carpeta || '').split('/').filter(Boolean).pop() || 'Opciones';
+  // Cuántas opciones se ven a la vez en la lista; las demás, desplazando (pedido el 25/11/2026)
+  const OPCIONES_A_LA_VISTA = 3;
   function prepararOpciones() {
     const caja = document.getElementById('opciones'), boton = document.getElementById('opciones-boton');
-    const hoja = document.getElementById('opciones-hoja'), lista = document.getElementById('opciones-lista');
+    const menu = document.getElementById('opciones-menu'), lista = document.getElementById('opciones-lista');
     // con una sola en una carpeta no hay nada que elegir: se ve, sin conmutador
     const conConmutador = OPCIONES.map((c, i) => [c, i]).filter(([c]) => c.opciones.length > 1);
-    // la carpeta, por su último nombre («Opciones cubierta/Opciones lamas» → «Opciones lamas»)
-    const rotulo = c => (c.carpeta || '').split('/').filter(Boolean).pop() || 'Opciones';
-    lista.innerHTML = conConmutador.map(([c, i]) =>
-      '<div class="opciones-carpeta" title="' + esc(c.carpeta || '') + '">' + esc(rotulo(c)) + '</div>' +
+    // con una carpeta, su nombre va en el botón; con varias, cada una encabeza sus opciones
+    const conCarpetas = conConmutador.length > 1;
+    // cada carpeta en su grupo: su nombre se queda arriba mientras pasan sus opciones y se va con ellas
+    lista.innerHTML = conConmutador.map(([c, i]) => '<div class="opciones-grupo">' +
+      (conCarpetas ? '<div class="opciones-carpeta" title="' + esc(c.carpeta || '') + '">' +
+        esc(rotuloCarpeta(c)) + '</div>' : '') +
       c.opciones.map((op, j) => '<button type="button" data-carpeta="' + i + '" data-opcion="' + j +
-        '" aria-pressed="false">' + esc(op.nombre) + '</button>').join('')).join('');
+        '" aria-pressed="false" title="' + esc(op.nombre) + '"><span>' + esc(op.nombre) + '</span></button>').join('') +
+      '</div>').join('');
     caja.hidden = !conConmutador.length;
-    const abrir = si => { hoja.hidden = !si; boton.setAttribute('aria-expanded', String(si)); };
-    boton.addEventListener('click', () => abrir(hoja.hidden));
-    document.getElementById('opciones-cerrar').addEventListener('click', () => abrir(false));
-    // al tocar fuera (la maqueta), se cierra; elegir no la cierra: se comparan seguidas
-    visor.addEventListener('pointerdown', e => {
-      if (!caja.contains(e.target) && !hoja.contains(e.target)) abrir(false);
-    });
+    // La altura de la lista: hasta el final de la tercera opción (con los nombres de carpeta que
+    // caigan antes); y al abrir, la elegida a la vista, debajo del nombre de su carpeta
+    const medir = () => {
+      const botones = lista.querySelectorAll('button');
+      lista.style.maxHeight = '';
+      if (botones.length > OPCIONES_A_LA_VISTA) {
+        const arriba = lista.getBoundingClientRect().top - lista.scrollTop;
+        lista.style.maxHeight = Math.ceil(botones[OPCIONES_A_LA_VISTA - 1].getBoundingClientRect().bottom - arriba) + 'px';
+      }
+      const elegida = lista.querySelector('button[aria-pressed="true"]');
+      if (elegida && lista.scrollHeight > lista.clientHeight) {
+        const cab = conCarpetas ? lista.querySelector('.opciones-carpeta').offsetHeight : 0;
+        const y = elegida.getBoundingClientRect().top - lista.getBoundingClientRect().top + lista.scrollTop;
+        if (y + elegida.offsetHeight > lista.scrollTop + lista.clientHeight || y - cab < lista.scrollTop)
+          lista.scrollTop = Math.max(0, y - cab);
+      }
+    };
+    const abrir = si => {
+      menu.hidden = !si; boton.setAttribute('aria-expanded', String(si));
+      if (si) medir();
+    };
+    boton.addEventListener('click', () => abrir(menu.hidden));
+    // al tocar fuera (la maqueta) o con Esc, se cierra; elegir no la cierra: se comparan seguidas
+    document.addEventListener('pointerdown', e => { if (!caja.contains(e.target)) abrir(false); }, true);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !menu.hidden) { abrir(false); boton.focus(); } });
     lista.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
       ELEGIDA[+b.dataset.carpeta] = +b.dataset.opcion;
       ponerOpciones();
     }));
-    // En la AR de Android, dentro de model-viewer (como el conmutador de modos); un toque en
-    // ellos no es un toque en la maqueta
-    const pie = document.querySelector('.pie');
-    [caja, hoja].forEach(x => x.addEventListener('beforexrselect', e => e.preventDefault()));
+    // En la AR de Android, dentro de model-viewer (como el conmutador de modos), arriba a la
+    // izquierda; un toque en él no es un toque en la maqueta
+    const sitio = caja.parentNode;
+    caja.addEventListener('beforexrselect', e => e.preventDefault());
     visor.addEventListener('ar-status', e => {
       if (e.detail.status === 'session-started' && !caja.hidden) {
-        caja.classList.add('en-ar'); hoja.classList.add('en-ar');
-        visor.appendChild(caja); visor.appendChild(hoja);
+        caja.classList.add('en-ar'); visor.appendChild(caja);
       } else if (e.detail.status === 'not-presenting' || e.detail.status === 'failed') {
-        caja.classList.remove('en-ar'); hoja.classList.remove('en-ar');
-        pie.prepend(caja); document.body.insertBefore(hoja, document.getElementById('error'));
+        caja.classList.remove('en-ar'); sitio.appendChild(caja);
       }
+      abrir(false);
     });
     ponerOpciones();
   }
